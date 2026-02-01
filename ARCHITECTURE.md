@@ -879,6 +879,258 @@ This provides a timeline view across all sessions — useful for debugging compl
 
 ---
 
+## Workflow Tree and Observability
+
+Ken is built for self-operation. When something breaks, I (the AI) need to diagnose and fix it without human intervention. This requires clear visibility into workflow state.
+
+### Workflow Tree Structure
+
+A workflow is a tree where:
+- **Nodes** are sessions
+- **Edges** are parent→child spawn relationships
+- **Root** is the initial session (spawned by human or another workflow)
+
+```
+$ ken tree
+
+project-root (ses-001) [sleeping] → waiting: ses-002, ses-003, ses-004
+│
+├── core/cli (ses-002) [complete] ✓ 8m
+│   ├── done: "CLI handles all request types"
+│   └── result: "Implemented checkpoint, spawn_and_sleep, complete, sleep"
+│
+├── core/state (ses-003) [sleeping] → waiting: ses-005, ses-006
+│   │
+│   ├── state/jsonl (ses-005) [complete] ✓ 12m
+│   │   ├── done: "JSONL append/read works atomically"
+│   │   └── result: "Implemented with fsync, handles partial writes"
+│   │
+│   └── state/index (ses-006) [active] ⚡ 47m ← LONG
+│       ├── done: "Index rebuilds correctly from JSONL"
+│       └── last checkpoint (43m ago): "Hit concurrent write issue..."
+│
+└── core/triggers (ses-004) [pending] ⏳ queued
+    └── done: "all_complete and timeout triggers evaluate"
+```
+
+At a glance I can see:
+- **Status of every session** — complete, active, sleeping, pending, failed
+- **What's blocking what** — sleeping sessions show what they're waiting for
+- **How long things take** — duration helps identify stuck sessions
+- **Definition of done** — what each session must accomplish
+- **Latest checkpoint** — what was the session doing when last heard from
+
+### Definition of Done (`done_when`)
+
+Every session has explicit completion criteria. This removes ambiguity about when to call `complete`.
+
+**In spawn request:**
+```json
+{
+  "type": "spawn_and_sleep",
+  "session_id": "ses-001",
+  "children": [
+    {
+      "ken": "core/cli",
+      "task": "Implement CLI request handling",
+      "done_when": {
+        "description": "CLI handles all request types",
+        "criteria": [
+          "checkpoint request returns {ok:true} and writes to JSONL",
+          "spawn_and_sleep creates children atomically",
+          "complete marks session done and writes result",
+          "Invalid JSON returns {ok:false, error:...}"
+        ],
+        "verify": "Run test suite: python -m pytest tests/cli/"
+      }
+    }
+  ]
+}
+```
+
+**Stored in session record:**
+```jsonl
+{"ts":"...","op":"create","sid":"ses-002","ken":"core/cli","task":"...","done_when":{"description":"CLI handles all request types","criteria":[...],"verify":"..."}}
+```
+
+**Delivered to agent at wake:**
+```markdown
+## Definition of Done
+
+You are done when:
+- CLI handles all request types
+
+Specific criteria:
+1. checkpoint request returns {ok:true} and writes to JSONL
+2. spawn_and_sleep creates children atomically
+3. complete marks session done and writes result
+4. Invalid JSON returns {ok:false, error:...}
+
+To verify: Run test suite: python -m pytest tests/cli/
+
+Do not call `ken complete` until these criteria are met.
+```
+
+### Observability Commands
+
+**Tree view:**
+```bash
+ken tree                    # Full workflow tree
+ken tree --active           # Only show active/pending branches
+ken tree --stuck            # Only show sessions running > threshold
+ken tree ses-003            # Subtree rooted at ses-003
+```
+
+**Session inspection:**
+```bash
+ken session ses-006         # Full details for one session
+
+# Output:
+# Session: ses-006
+# Ken: state/index
+# Status: active
+# Parent: ses-003
+# Started: 2026-02-01T10:00:00Z (47m ago)
+#
+# Task: Implement index rebuild from JSONL
+#
+# Done When:
+#   Index rebuilds correctly from JSONL
+#   - [?] rebuild_index() produces correct active.json
+#   - [?] rebuild_index() produces correct sleeping.json
+#   - [?] Handles corrupted JSONL gracefully
+#
+# Checkpoints:
+#   10:05:00 - "Starting implementation"
+#   10:12:00 - "Basic rebuild works"
+#   10:20:00 - "Hit concurrent write issue, investigating"
+#   (no checkpoint for 27m)
+#
+# Last known state: Investigating concurrent write issue
+```
+
+**Timeline:**
+```bash
+ken log                     # Recent events across all sessions
+ken log ses-006             # Events for one session
+ken log --since 1h          # Last hour
+ken log --follow            # Tail the event stream
+```
+
+### Self-Diagnosis
+
+**Automated health check:**
+```bash
+ken diagnose
+
+# Output:
+# === Ken Health Check ===
+#
+# Sessions:
+#   ✓ 3 complete
+#   ⚡ 1 active (ses-006, 47m) ← WARNING: unusually long
+#   💤 2 sleeping
+#   ⏳ 1 pending
+#
+# Issues Found:
+#   ⚠ ses-006 active for 47m (typical: 5-15m)
+#     Last checkpoint: 27m ago
+#     Suggestion: Check if stuck, consider recovery
+#
+#   ⚠ ses-004 pending for 35m, not spawned
+#     Daemon status: running (pid 12345)
+#     Suggestion: Check daemon logs, may need restart
+#
+# Storage:
+#   ✓ sessions.jsonl: 847 records, 124KB, no corruption
+#   ✓ events.jsonl: 1203 records, 89KB
+#   ✓ No uncommitted transactions
+#
+# Recommendations:
+#   1. Investigate ses-006: ken session ses-006
+#   2. Check daemon: ken daemon-logs --last 50
+```
+
+**Why is X blocked?**
+```bash
+ken why ses-001
+
+# Output:
+# ses-001 is SLEEPING
+#
+# Waiting for: all_complete [ses-002, ses-003, ses-004]
+#
+#   ses-002: complete ✓
+#   ses-003: sleeping (waiting for ses-005, ses-006)
+#     ses-005: complete ✓
+#     ses-006: active 47m ← BLOCKING
+#   ses-004: pending (queued behind ses-006)
+#
+# Root cause: ses-006 has been active for 47m
+#
+# Options:
+#   ken session ses-006        # Inspect what it's doing
+#   ken recover ses-006        # Restart from last checkpoint
+#   ken abandon ses-006        # Give up, let parent handle failure
+```
+
+### Error Recovery
+
+**Recover a stuck/crashed session:**
+```bash
+ken recover ses-006
+
+# Spawns new agent with:
+# - Same kenning (rebuild understanding)
+# - Last checkpoint (restore context)
+# - Task + done_when (know what to do)
+# - Flag indicating this is a recovery
+```
+
+**Abandon a hopelessly stuck session:**
+```bash
+ken abandon ses-006 --reason "Infinite loop in concurrent write handling"
+
+# Marks ses-006 as failed
+# Parent (ses-003) trigger changes: now waiting for [ses-005] only?
+# Or parent wakes with partial results + failure notification
+```
+
+**Force rebuild indexes:**
+```bash
+ken rebuild-index
+
+# Deletes index/*.json
+# Replays sessions.jsonl from beginning
+# Rebuilds all derived state
+```
+
+**Validate integrity:**
+```bash
+ken validate
+
+# Checks:
+# - JSONL parseable, no corruption
+# - All transactions committed or rolled back
+# - All referenced sessions exist
+# - All triggers reference valid sessions
+# - No orphaned sessions (parent doesn't know about them)
+```
+
+### Failure Notification
+
+When ken detects problems, it can write to a notification log:
+
+```jsonl
+{"ts":"...","level":"warning","msg":"Session ses-006 active for 47m","session":"ses-006","action":"investigate"}
+{"ts":"...","level":"error","msg":"Daemon crashed","pid":12345,"action":"restart"}
+{"ts":"...","level":"info","msg":"Trigger satisfied","session":"ses-001","trigger":"all_complete"}
+```
+
+A monitoring agent (or the next agent to wake) can check this log and take action.
+
+---
+
 ## Reflection and Evolution
 
 ### Reflection Collection
