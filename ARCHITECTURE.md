@@ -76,7 +76,7 @@ A **session** is one instance working within a ken. Sessions:
 
 Multiple sessions can work within the same ken over time. The kenning is the identity; sessions are instances.
 
-Session state is stored in JSONL (JSON Lines) format for durability — see Storage Model below.
+Session state is stored in SQLite for durability — see Storage Model below.
 
 ### Checkpoint
 
@@ -157,7 +157,7 @@ Ken runs as a persistent process (daemon) on the local machine. It is the sole c
 │         └────────────────┼────────────────┘                      │
 │                          │                                       │
 │                    ┌─────┴─────┐                                 │
-│                    │   JSONL   │                                 │
+│                    │  SQLite   │                                 │
 │                    │   Store   │                                 │
 │                    └───────────┘                                 │
 └─────────────────────────────────────────────────────────────────┘
@@ -171,7 +171,7 @@ Ken runs as a persistent process (daemon) on the local machine. It is the sole c
 ```
 
 **Ken's responsibilities:**
-1. **State management** — All session state lives in ken's JSONL store
+1. **State management** — All session state lives in ken's SQLite database
 2. **Trigger evaluation** — Continuously checks if sleeping sessions should wake
 3. **Agent spawning** — Starts Claude Code instances with proper context
 4. **Request handling** — Processes spawn/checkpoint/complete/sleep from agents
@@ -179,96 +179,83 @@ Ken runs as a persistent process (daemon) on the local machine. It is the sole c
 
 **Agents communicate only through ken:**
 - Agent wants to spawn children → sends request to ken
-- Agent wants to checkpoint → sends request to ken
 - Agent completes → tells ken
 - Agent needs child results → ken provides them at wake time
 
-### Storage Model: JSONL
+### Storage Model: SQLite
 
-All mutable state uses **JSONL** (JSON Lines) format for durability.
+All mutable state uses **SQLite** for durability.
 
-**Why JSONL:**
-- Each line is a complete, self-contained JSON object
-- Append-only writes are atomic (for reasonable line sizes)
-- Half-written line at EOF is detectable — just ignore it
-- No ambiguity about partial writes (unlike YAML/Markdown)
-- Concurrent appends are safe
-- Easy to tail, grep, process incrementally
+**Why SQLite:**
+- ACID transactions (spawn_and_sleep is one atomic transaction)
+- Built-in indexes (query by status instantly)
+- No state replay needed (current state always queryable)
+- Concurrent access handled properly
+- Crash recovery via WAL mode
+- Battle-tested, well-supported in Rust (rusqlite)
 
-**Core state files:**
+**Schema:**
 
+```sql
+CREATE TABLE sessions (
+    id TEXT PRIMARY KEY,
+    ken TEXT NOT NULL,
+    task TEXT NOT NULL,
+    status TEXT NOT NULL,  -- pending, active, sleeping, complete, failed
+    parent_id TEXT,
+    trigger TEXT,          -- JSON, null unless sleeping
+    checkpoint TEXT,       -- null unless sleeping/resuming
+    result TEXT,           -- null unless complete
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (parent_id) REFERENCES sessions(id)
+);
+
+CREATE INDEX idx_sessions_status ON sessions(status);
+CREATE INDEX idx_sessions_parent ON sessions(parent_id);
+
+CREATE TABLE events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT NOT NULL,
+    session_id TEXT,
+    event_type TEXT NOT NULL,
+    data TEXT,  -- JSON
+    FOREIGN KEY (session_id) REFERENCES sessions(id)
+);
+
+CREATE INDEX idx_events_session ON events(session_id);
+CREATE INDEX idx_events_ts ON events(ts);
 ```
-.ken/
-  sessions.jsonl          # all session records (append-only)
-  events.jsonl            # all events across all sessions (append-only)
 
-  # Derived/indexed state (rebuilt from JSONL if needed)
-  index/
-    active.json           # currently active session IDs
-    sleeping.json         # sleeping sessions + their triggers
-    pending.json          # sessions ready to wake
+**Atomic spawn_and_sleep:**
+```sql
+BEGIN;
+INSERT INTO sessions (id, ken, task, status, parent_id, ...) VALUES (...);  -- child 1
+INSERT INTO sessions (id, ken, task, status, parent_id, ...) VALUES (...);  -- child 2
+UPDATE sessions SET status = 'sleeping', trigger = ?, checkpoint = ? WHERE id = ?;  -- parent
+INSERT INTO events (ts, session_id, event_type, data) VALUES (...);  -- log event
+COMMIT;
 ```
 
-**sessions.jsonl format:**
-```jsonl
-{"ts":"2026-02-01T10:00:00Z","op":"create","sid":"abc123","ken":"core/cli","task":"build parser","parent":null}
-{"ts":"2026-02-01T10:00:01Z","op":"status","sid":"abc123","status":"waking"}
-{"ts":"2026-02-01T10:01:00Z","op":"status","sid":"abc123","status":"active"}
-{"ts":"2026-02-01T10:05:00Z","op":"checkpoint","sid":"abc123","content":"reviewed interfaces..."}
-{"ts":"2026-02-01T10:10:00Z","op":"spawn","sid":"abc123","children":["def456","ghi789"]}
-{"ts":"2026-02-01T10:10:01Z","op":"sleep","sid":"abc123","trigger":{"all_complete":["def456","ghi789"]}}
-{"ts":"2026-02-01T10:10:01Z","op":"status","sid":"abc123","status":"sleeping"}
-{"ts":"2026-02-01T11:30:00Z","op":"wake","sid":"abc123","reason":"trigger_satisfied"}
-{"ts":"2026-02-01T11:30:00Z","op":"status","sid":"abc123","status":"active"}
-{"ts":"2026-02-01T11:45:00Z","op":"complete","sid":"abc123","result":"integration done"}
-{"ts":"2026-02-01T11:45:00Z","op":"status","sid":"abc123","status":"complete"}
-```
-
-**Reading current state:**
-1. Scan sessions.jsonl from beginning
-2. Build in-memory state by applying each record
-3. Final state is authoritative
-
-**Indexes are optimization only:**
-- Rebuilt from JSONL on startup
-- Updated incrementally during operation
-- If corrupted, delete and rebuild from JSONL
+Either all succeed or nothing changes. No custom transaction logic needed.
 
 ### Directory Structure
 
 ```
 project/
   .ken/
-    config.json               # project-level configuration
-    sessions.jsonl            # all session state (append-only, authoritative)
-    events.jsonl              # all events (append-only log)
-    checkpoints/
-      {session-id}.md         # human-readable checkpoint snapshots
-    results/
-      {session-id}.md         # human-readable result snapshots
-    index/
-      active.json             # derived: active sessions
-      sleeping.json           # derived: sleeping sessions + triggers
-      pending.json            # derived: ready-to-wake sessions
+    ken.db                    # SQLite database (WAL mode)
+    ken.db-wal                # Write-ahead log (automatic)
+    ken.db-shm                # Shared memory (automatic)
 
   kens/
     {path}/
       kenning.md              # reconstruction sequence (human-authored)
-      interface.md            # what this ken exposes/consumes
-      meta.json               # parent, peers, version
-
-  reflections/
-    {path}.jsonl              # accumulated reflections (append-only)
 
   work/                       # actual code/artifacts
 ```
 
-**Why some files are still Markdown:**
-- `kenning.md` — Human-authored, read-only during operation
-- `checkpoints/{id}.md` — Snapshot for human readability; JSONL has canonical data
-- `results/{id}.md` — Snapshot for human readability; JSONL has canonical data
-
-The JSONL files are the source of truth. Markdown files are human-friendly views.
+Simplified: one database file, kennings in markdown.
 
 ### Session Lifecycle
 
@@ -508,86 +495,51 @@ Checkpoints are written:
 
 ### Checkpoint Storage
 
-Checkpoints are stored in JSONL (append-only, all history preserved):
-
-```jsonl
-{"ts":"2026-02-01T10:05:00Z","op":"checkpoint","sid":"abc123","content":"...checkpoint content..."}
-{"ts":"2026-02-01T10:10:00Z","op":"checkpoint","sid":"abc123","content":"...updated checkpoint..."}
-```
-
-The latest checkpoint for a session is the last checkpoint record for that session ID.
-
-**Human-readable snapshots:**
-When a checkpoint is written, ken also writes a snapshot to `.ken/checkpoints/{session-id}.md` for human inspection. This is a convenience — the JSONL is authoritative.
+Checkpoints are stored in the sessions table `checkpoint` column. Updated whenever an agent calls `spawn_and_sleep` or `sleep`.
 
 ---
 
 ## Ken Interface
 
-Ken operates as a daemon with a CLI for both human interaction and agent requests.
+### Phase 1 MVP Commands
 
-### Daemon Operation
-
-```bash
-# Start ken daemon (runs continuously)
-ken daemon
-
-# Or run in foreground for debugging
-ken daemon --foreground
-```
-
-The daemon:
-1. Loads state from JSONL on startup
-2. Listens for agent requests (via Unix socket or HTTP)
-3. Continuously evaluates triggers
-4. Spawns agents when sessions become ready
-5. Processes incoming requests atomically
-
-### CLI Commands (Human)
+The MVP has **5 commands** — enough to run the manual workflow loop:
 
 ```bash
-# Project
-ken init                          # Initialize .ken structure
-ken status                        # Show project status, active sessions
-
-# Ken Management
-ken create <path>                 # Create new ken
-ken edit <path>                   # Edit kenning
-ken tree                          # Show ken hierarchy
-
-# Manual session control
-ken wake <ken-path> \             # Manually start a session
-  --task "description"
-
-# Introspection
-ken sessions                      # List all sessions
-ken session <id>                  # Show session details
-ken pending                       # Show sessions ready to wake
-ken log <session-id>              # Show session event log
-
-# Debugging
-ken rebuild-index                 # Rebuild index from JSONL
-ken validate                      # Check JSONL integrity
+ken init                          # Create .ken/ken.db, initialize schema
+ken wake <ken> --task "..."       # Create session, spawn agent
+ken request '<json>'              # Agent → ken communication
+ken process                       # Evaluate triggers + spawn one pending
+ken status                        # Show what's happening
 ```
 
-### Agent Requests
+**The manual workflow loop:**
+```bash
+ken wake project/root --task "build ken"   # Start work
 
-Agents communicate with ken via structured requests. These can be sent via:
-- **CLI**: `ken request <json>` (simplest for MVP)
-- **Unix socket**: Direct IPC (lower latency)
-- **HTTP**: REST API (for remote/distributed setups)
+# Keep running until done:
+ken process                                 # Check triggers, spawn pending
+ken process
+ken process
+ken status                                  # See what's happening
+```
 
-**Request types:**
+### Agent Request Types
+
+Agents call `ken request '<json>'` with **3 request types**:
 
 ```json
-// Checkpoint
-{"type":"checkpoint","session_id":"abc123","content":"...what I've done, what's next..."}
+// Complete - mark session done
+{"type":"complete","session_id":"abc123","result":"...what I produced..."}
 
 // Spawn children + sleep with trigger (atomic)
 {"type":"spawn_and_sleep","session_id":"abc123","children":[
   {"ken":"core/cli","task":"build parser"},
   {"ken":"core/state","task":"implement persistence"}
 ],"trigger":{"all_complete":"__CHILDREN__"},"checkpoint":"...my context..."}
+
+// Sleep without spawning (wait for timeout, etc.)
+{"type":"sleep","session_id":"abc123","trigger":{"timeout_seconds":3600},"checkpoint":"..."}
 
 // Complete
 {"type":"complete","session_id":"abc123","result":"...what I produced..."}
@@ -634,37 +586,27 @@ The critical atomic operation is `spawn_and_sleep` — creating children and reg
 }
 ```
 
-**Ken processes atomically:**
-1. Generate session IDs for all children
-2. Substitute `__CHILDREN__` with actual child IDs in trigger
-3. Prepare all JSONL records:
-   - Child session `create` records
-   - Parent `spawn` record (lists children)
-   - Parent `checkpoint` record
-   - Parent `sleep` record (with trigger)
-   - Parent `status` → `sleeping`
-4. Write all records to JSONL in single `write()` call (atomic for small writes)
-5. Update in-memory index
-6. Mark children as `pending` (ready to wake)
-
-**If write fails:** Nothing is committed. Agent receives error, can retry.
-
-**JSONL atomicity:**
-- All records for one atomic operation are written together
-- They share a transaction ID for grouping
-- On recovery, incomplete transactions (missing final record) are rolled back
-
-```jsonl
-{"ts":"...","tx":"tx-001","op":"create","sid":"def456","ken":"core/cli","task":"..."}
-{"ts":"...","tx":"tx-001","op":"create","sid":"ghi789","ken":"core/state","task":"..."}
-{"ts":"...","tx":"tx-001","op":"spawn","sid":"abc123","children":["def456","ghi789"]}
-{"ts":"...","tx":"tx-001","op":"checkpoint","sid":"abc123","content":"..."}
-{"ts":"...","tx":"tx-001","op":"sleep","sid":"abc123","trigger":{...}}
-{"ts":"...","tx":"tx-001","op":"status","sid":"abc123","status":"sleeping"}
-{"ts":"...","tx":"tx-001","op":"commit"}
+**Ken processes atomically (SQLite transaction):**
+```sql
+BEGIN;
+-- Generate IDs and create children
+INSERT INTO sessions (id, ken, task, status, parent_id, created_at, updated_at)
+  VALUES ('child-1', 'core/cli', 'Build argument parser', 'pending', 'abc123', ...);
+INSERT INTO sessions (id, ken, task, status, parent_id, created_at, updated_at)
+  VALUES ('child-2', 'core/state', 'Implement persistence', 'pending', 'abc123', ...);
+-- Update parent
+UPDATE sessions
+  SET status = 'sleeping',
+      trigger = '{"all_complete":["child-1","child-2"]}',
+      checkpoint = '## Context\n...',
+      updated_at = ...
+  WHERE id = 'abc123';
+-- Log event
+INSERT INTO events (ts, session_id, event_type, data) VALUES (...);
+COMMIT;
 ```
 
-The final `commit` record marks the transaction complete. On replay, transactions without `commit` are ignored.
+Either all succeed or nothing changes. SQLite guarantees this.
 
 ---
 
@@ -696,14 +638,14 @@ claude --print --output-format stream-json \
 From within a Claude Code session, agents send requests to ken:
 
 ```bash
-# Via CLI (simplest)
-ken request '{"type":"checkpoint","session_id":"abc123","content":"..."}'
+# Via CLI
+ken request '{"type":"complete","session_id":"abc123","result":"Implemented storage layer"}'
 
 # Response comes on stdout as JSON
 {"ok":true}
 ```
 
-The agent (Claude) can construct these JSON requests and parse responses.
+The agent (Claude) constructs JSON requests and parses responses.
 
 ### Session Context Delivered to Agent
 
@@ -724,9 +666,8 @@ You are an AI agent working within the ken system. Your session ID is `{session-
 Send requests using: ken request '<json>'
 
 Available request types:
-- checkpoint: Save your state
-- spawn_and_sleep: Create children, sleep until they complete
 - complete: Finish your session with a result
+- spawn_and_sleep: Create children, sleep until they complete
 - sleep: Sleep until a trigger (timeout, etc.)
 
 ## Context
@@ -758,7 +699,7 @@ Now: Walk through the kenning to build your understanding, then proceed with you
       │ Trigger satisfied OR manual wake request
       ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  1. Load session from JSONL                                      │
+│  1. Load session from SQLite                                     │
 │  2. Load kenning for session's ken                               │
 │  3. Gather context (checkpoint, child results)                   │
 │  4. Spawn Claude Code instance with context                      │
@@ -771,22 +712,19 @@ Now: Walk through the kenning to build your understanding, then proceed with you
 │   - Walks through kenning (builds understanding)                 │
 │   - Works on task                                                │
 │   - Sends requests to ken:                                       │
-│       • checkpoint (save state)                                  │
 │       • spawn_and_sleep (create children, wait)                  │
 │       • complete (done, here's result)                           │
 │       • sleep (wait for trigger)                                 │
 └─────────────────────────────────────────────────────────────────┘
       │
-      │ Request received by ken daemon
+      │ Request received by ken
       ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│   KEN DAEMON                                                     │
+│   KEN                                                            │
 │                                                                  │
-│   - Processes request atomically                                 │
-│   - Writes to JSONL                                              │
-│   - Updates indexes                                              │
-│   - If spawn_and_sleep: marks children pending, parent sleeping  │
-│   - If complete: marks session complete, checks parent triggers  │
+│   - Processes request in SQLite transaction                      │
+│   - If spawn_and_sleep: creates children, parent sleeps          │
+│   - If complete: marks session complete                          │
 │   - Returns response to agent                                    │
 └─────────────────────────────────────────────────────────────────┘
       │
@@ -844,36 +782,28 @@ If checkpoint is corrupted/missing:
 
 ### Transaction Failure
 
-If atomic operation (spawn-batch) fails partway:
-1. Transaction is rolled back
+If atomic operation (spawn_and_sleep) fails partway:
+1. SQLite transaction is rolled back automatically
 2. No partial state exists
 3. Parent remains active, can retry
-4. Staging directory cleaned up
 
 ---
 
 ## Event Log
 
-The JSONL storage model means we have a complete event log by default — `sessions.jsonl` IS the event log.
+Events are stored in the `events` table for debugging and observability.
 
-**Global event stream** (`.ken/events.jsonl`):
-
-For cross-session debugging, ken also maintains a unified event stream:
-
-```jsonl
-{"ts":"2026-02-01T10:00:00Z","event":"session_created","sid":"abc123","ken":"core/cli"}
-{"ts":"2026-02-01T10:00:01Z","event":"agent_spawned","sid":"abc123","pid":12345}
-{"ts":"2026-02-01T10:05:00Z","event":"checkpoint","sid":"abc123","summary":"reviewed interfaces"}
-{"ts":"2026-02-01T10:10:00Z","event":"children_spawned","sid":"abc123","children":["def456","ghi789"]}
-{"ts":"2026-02-01T10:10:01Z","event":"session_sleeping","sid":"abc123"}
-{"ts":"2026-02-01T10:10:02Z","event":"agent_spawned","sid":"def456","pid":12346}
-{"ts":"2026-02-01T10:15:00Z","event":"session_complete","sid":"def456"}
-{"ts":"2026-02-01T10:20:00Z","event":"agent_spawned","sid":"ghi789","pid":12347}
-{"ts":"2026-02-01T10:30:00Z","event":"session_complete","sid":"ghi789"}
-{"ts":"2026-02-01T10:30:01Z","event":"trigger_satisfied","sid":"abc123","trigger":"all_complete"}
-{"ts":"2026-02-01T10:30:02Z","event":"agent_spawned","sid":"abc123","pid":12348,"mode":"resume"}
-{"ts":"2026-02-01T10:45:00Z","event":"session_complete","sid":"abc123"}
+```sql
+SELECT ts, session_id, event_type, data FROM events ORDER BY ts DESC LIMIT 20;
 ```
+
+Example events:
+- `session_created` — new session
+- `agent_spawned` — Claude instance started
+- `children_spawned` — spawn_and_sleep executed
+- `session_sleeping` — waiting for trigger
+- `trigger_satisfied` — children completed
+- `session_complete` — work done
 
 This provides a timeline view across all sessions — useful for debugging complex workflows.
 
@@ -901,12 +831,12 @@ project-root (ses-001) [sleeping] → waiting: ses-002, ses-003, ses-004
 │
 ├── core/state (ses-003) [sleeping] → waiting: ses-005, ses-006
 │   │
-│   ├── state/jsonl (ses-005) [complete] ✓ 12m
-│   │   ├── done: "JSONL append/read works atomically"
-│   │   └── result: "Implemented with fsync, handles partial writes"
+│   ├── state/sqlite (ses-005) [complete] ✓ 12m
+│   │   ├── done: "SQLite transactions work atomically"
+│   │   └── result: "Implemented with WAL mode"
 │   │
-│   └── state/index (ses-006) [active] ⚡ 47m ← LONG
-│       ├── done: "Index rebuilds correctly from JSONL"
+│   └── state/queries (ses-006) [active] ⚡ 47m ← LONG
+│       ├── done: "Session queries work correctly"
 │       └── last checkpoint (43m ago): "Hit concurrent write issue..."
 │
 └── core/triggers (ses-004) [pending] ⏳ queued
@@ -936,7 +866,7 @@ Every session has explicit completion criteria. This removes ambiguity about whe
       "done_when": {
         "description": "CLI handles all request types",
         "criteria": [
-          "checkpoint request returns {ok:true} and writes to JSONL",
+          "spawn_and_sleep creates children atomically in SQLite",
           "spawn_and_sleep creates children atomically",
           "complete marks session done and writes result",
           "Invalid JSON returns {ok:false, error:...}"
@@ -948,10 +878,7 @@ Every session has explicit completion criteria. This removes ambiguity about whe
 }
 ```
 
-**Stored in session record:**
-```jsonl
-{"ts":"...","op":"create","sid":"ses-002","ken":"core/cli","task":"...","done_when":{"description":"CLI handles all request types","criteria":[...],"verify":"..."}}
-```
+**Stored in sessions table** with done_when as JSON column.
 
 **Delivered to agent at wake:**
 ```markdown
@@ -961,12 +888,12 @@ You are done when:
 - CLI handles all request types
 
 Specific criteria:
-1. checkpoint request returns {ok:true} and writes to JSONL
-2. spawn_and_sleep creates children atomically
-3. complete marks session done and writes result
+1. spawn_and_sleep creates children atomically
+2. complete marks session done and writes result
+3. sleep registers trigger correctly
 4. Invalid JSON returns {ok:false, error:...}
 
-To verify: Run test suite: python -m pytest tests/cli/
+To verify: Run test suite: cargo test
 
 Do not call `ken complete` until these criteria are met.
 ```
@@ -987,26 +914,21 @@ ken session ses-006         # Full details for one session
 
 # Output:
 # Session: ses-006
-# Ken: state/index
+# Ken: state/queries
 # Status: active
 # Parent: ses-003
 # Started: 2026-02-01T10:00:00Z (47m ago)
 #
-# Task: Implement index rebuild from JSONL
+# Task: Implement session queries
 #
 # Done When:
-#   Index rebuilds correctly from JSONL
-#   - [?] rebuild_index() produces correct active.json
-#   - [?] rebuild_index() produces correct sleeping.json
-#   - [?] Handles corrupted JSONL gracefully
+#   Session queries work correctly
+#   - [?] query_by_status() returns correct sessions
+#   - [?] query_children() returns child sessions
+#   - [?] Handles empty results gracefully
 #
-# Checkpoints:
-#   10:05:00 - "Starting implementation"
-#   10:12:00 - "Basic rebuild works"
-#   10:20:00 - "Hit concurrent write issue, investigating"
-#   (no checkpoint for 27m)
-#
-# Last known state: Investigating concurrent write issue
+# Last checkpoint (43m ago):
+#   "Hit concurrent write issue, investigating"
 ```
 
 **Timeline:**
@@ -1042,9 +964,8 @@ ken diagnose
 #     Suggestion: Check daemon logs, may need restart
 #
 # Storage:
-#   ✓ sessions.jsonl: 847 records, 124KB, no corruption
-#   ✓ events.jsonl: 1203 records, 89KB
-#   ✓ No uncommitted transactions
+#   ✓ ken.db: 847 sessions, 1203 events
+#   ✓ Database integrity OK
 #
 # Recommendations:
 #   1. Investigate ses-006: ken session ses-006
@@ -1096,22 +1017,12 @@ ken abandon ses-006 --reason "Infinite loop in concurrent write handling"
 # Or parent wakes with partial results + failure notification
 ```
 
-**Force rebuild indexes:**
-```bash
-ken rebuild-index
-
-# Deletes index/*.json
-# Replays sessions.jsonl from beginning
-# Rebuilds all derived state
-```
-
 **Validate integrity:**
 ```bash
 ken validate
 
 # Checks:
-# - JSONL parseable, no corruption
-# - All transactions committed or rolled back
+# - SQLite database integrity (PRAGMA integrity_check)
 # - All referenced sessions exist
 # - All triggers reference valid sessions
 # - No orphaned sessions (parent doesn't know about them)
@@ -1119,15 +1030,13 @@ ken validate
 
 ### Failure Notification
 
-When ken detects problems, it can write to a notification log:
+When ken detects problems, it writes to the events table:
 
-```jsonl
-{"ts":"...","level":"warning","msg":"Session ses-006 active for 47m","session":"ses-006","action":"investigate"}
-{"ts":"...","level":"error","msg":"Daemon crashed","pid":12345,"action":"restart"}
-{"ts":"...","level":"info","msg":"Trigger satisfied","session":"ses-001","trigger":"all_complete"}
+```sql
+SELECT * FROM events WHERE event_type = 'warning' OR event_type = 'error';
 ```
 
-A monitoring agent (or the next agent to wake) can check this log and take action.
+A monitoring agent (or the next agent to wake) can check this and take action.
 
 ---
 
