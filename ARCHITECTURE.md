@@ -6,6 +6,14 @@ Ken is a durable workflow system for AI agent self-orchestration. It solves the 
 
 **Core insight**: There is no distinction between "orchestrator" and "agent". All are instances of the same AI, differentiated only by which ken they wake into. Any agent can spawn other agents. The system is recursive and self-similar at every level.
 
+**Ken is the communication engine**: Agents don't communicate directly with each other. All inter-agent coordination flows through ken. Ken is a running service that:
+- Manages all session state
+- Wakes agents when triggers are satisfied
+- Receives requests from agents (spawn, checkpoint, complete, sleep)
+- Ensures atomicity and durability of all operations
+
+Agents talk to ken. Ken talks to agents. Agents never talk directly to each other.
+
 ---
 
 ## Core Concepts
@@ -68,14 +76,7 @@ A **session** is one instance working within a ken. Sessions:
 
 Multiple sessions can work within the same ken over time. The kenning is the identity; sessions are instances.
 
-```
-.ken/sessions/
-  {session-id}/
-    meta.yaml        # ken, status, parent, children
-    checkpoint.md    # current state (for recovery)
-    trigger.yaml     # wake condition (if sleeping)
-    result.md        # output (when complete)
-```
+Session state is stored in JSONL (JSON Lines) format for durability — see Storage Model below.
 
 ### Checkpoint
 
@@ -140,34 +141,134 @@ Reflections accumulate. A separate process can analyze them and propose kenning 
 
 ## System Architecture
 
+### Ken as a Service
+
+Ken runs as a persistent process (daemon) on the local machine. It is the sole coordinator of all agent activity.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         KEN DAEMON                               │
+│                                                                  │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐              │
+│  │   State     │  │   Trigger   │  │   Agent     │              │
+│  │   Manager   │  │   Evaluator │  │   Spawner   │              │
+│  └─────────────┘  └─────────────┘  └─────────────┘              │
+│         │                │                │                      │
+│         └────────────────┼────────────────┘                      │
+│                          │                                       │
+│                    ┌─────┴─────┐                                 │
+│                    │   JSONL   │                                 │
+│                    │   Store   │                                 │
+│                    └───────────┘                                 │
+└─────────────────────────────────────────────────────────────────┘
+        ▲                                           │
+        │ requests (spawn, checkpoint, etc.)        │ wake
+        │                                           ▼
+┌─────────────┐  ┌─────────────┐  ┌─────────────┐
+│   Agent A   │  │   Agent B   │  │   Agent C   │
+│  (Claude)   │  │  (Claude)   │  │  (Claude)   │
+└─────────────┘  └─────────────┘  └─────────────┘
+```
+
+**Ken's responsibilities:**
+1. **State management** — All session state lives in ken's JSONL store
+2. **Trigger evaluation** — Continuously checks if sleeping sessions should wake
+3. **Agent spawning** — Starts Claude Code instances with proper context
+4. **Request handling** — Processes spawn/checkpoint/complete/sleep from agents
+5. **Atomicity** — Ensures multi-step operations succeed or fail completely
+
+**Agents communicate only through ken:**
+- Agent wants to spawn children → sends request to ken
+- Agent wants to checkpoint → sends request to ken
+- Agent completes → tells ken
+- Agent needs child results → ken provides them at wake time
+
+### Storage Model: JSONL
+
+All mutable state uses **JSONL** (JSON Lines) format for durability.
+
+**Why JSONL:**
+- Each line is a complete, self-contained JSON object
+- Append-only writes are atomic (for reasonable line sizes)
+- Half-written line at EOF is detectable — just ignore it
+- No ambiguity about partial writes (unlike YAML/Markdown)
+- Concurrent appends are safe
+- Easy to tail, grep, process incrementally
+
+**Core state files:**
+
+```
+.ken/
+  sessions.jsonl          # all session records (append-only)
+  events.jsonl            # all events across all sessions (append-only)
+
+  # Derived/indexed state (rebuilt from JSONL if needed)
+  index/
+    active.json           # currently active session IDs
+    sleeping.json         # sleeping sessions + their triggers
+    pending.json          # sessions ready to wake
+```
+
+**sessions.jsonl format:**
+```jsonl
+{"ts":"2026-02-01T10:00:00Z","op":"create","sid":"abc123","ken":"core/cli","task":"build parser","parent":null}
+{"ts":"2026-02-01T10:00:01Z","op":"status","sid":"abc123","status":"waking"}
+{"ts":"2026-02-01T10:01:00Z","op":"status","sid":"abc123","status":"active"}
+{"ts":"2026-02-01T10:05:00Z","op":"checkpoint","sid":"abc123","content":"reviewed interfaces..."}
+{"ts":"2026-02-01T10:10:00Z","op":"spawn","sid":"abc123","children":["def456","ghi789"]}
+{"ts":"2026-02-01T10:10:01Z","op":"sleep","sid":"abc123","trigger":{"all_complete":["def456","ghi789"]}}
+{"ts":"2026-02-01T10:10:01Z","op":"status","sid":"abc123","status":"sleeping"}
+{"ts":"2026-02-01T11:30:00Z","op":"wake","sid":"abc123","reason":"trigger_satisfied"}
+{"ts":"2026-02-01T11:30:00Z","op":"status","sid":"abc123","status":"active"}
+{"ts":"2026-02-01T11:45:00Z","op":"complete","sid":"abc123","result":"integration done"}
+{"ts":"2026-02-01T11:45:00Z","op":"status","sid":"abc123","status":"complete"}
+```
+
+**Reading current state:**
+1. Scan sessions.jsonl from beginning
+2. Build in-memory state by applying each record
+3. Final state is authoritative
+
+**Indexes are optimization only:**
+- Rebuilt from JSONL on startup
+- Updated incrementally during operation
+- If corrupted, delete and rebuild from JSONL
+
 ### Directory Structure
 
 ```
 project/
   .ken/
-    config.yaml              # project-level configuration
-    sessions/
-      {session-id}/
-        meta.yaml            # ken, status, parent_session, children
-        checkpoint.md        # durable state for recovery
-        trigger.yaml         # wake conditions (if sleeping)
-        result.md            # output (when complete)
-        events.yaml          # append-only event log (optional)
-    pending/
-      {session-id}.yaml      # sessions ready to wake (trigger satisfied)
+    config.json               # project-level configuration
+    sessions.jsonl            # all session state (append-only, authoritative)
+    events.jsonl              # all events (append-only log)
+    checkpoints/
+      {session-id}.md         # human-readable checkpoint snapshots
+    results/
+      {session-id}.md         # human-readable result snapshots
+    index/
+      active.json             # derived: active sessions
+      sleeping.json           # derived: sleeping sessions + triggers
+      pending.json            # derived: ready-to-wake sessions
 
   kens/
     {path}/
-      kenning.md             # reconstruction sequence
-      interface.md           # what this ken exposes/consumes
-      meta.yaml              # parent, peers, version
+      kenning.md              # reconstruction sequence (human-authored)
+      interface.md            # what this ken exposes/consumes
+      meta.json               # parent, peers, version
 
   reflections/
-    {path}/
-      {timestamp}.md         # accumulated feedback
+    {path}.jsonl              # accumulated reflections (append-only)
 
-  work/                      # actual code/artifacts
+  work/                       # actual code/artifacts
 ```
+
+**Why some files are still Markdown:**
+- `kenning.md` — Human-authored, read-only during operation
+- `checkpoints/{id}.md` — Snapshot for human readability; JSONL has canonical data
+- `results/{id}.md` — Snapshot for human readability; JSONL has canonical data
+
+The JSONL files are the source of truth. Markdown files are human-friendly views.
 
 ### Session Lifecycle
 
@@ -407,21 +508,42 @@ Checkpoints are written:
 
 ### Checkpoint Storage
 
-```
-.ken/sessions/{session-id}/
-  checkpoint.md           # latest checkpoint (overwritten)
-  checkpoint-history/     # optional: historical checkpoints
-    {timestamp}.md
+Checkpoints are stored in JSONL (append-only, all history preserved):
+
+```jsonl
+{"ts":"2026-02-01T10:05:00Z","op":"checkpoint","sid":"abc123","content":"...checkpoint content..."}
+{"ts":"2026-02-01T10:10:00Z","op":"checkpoint","sid":"abc123","content":"...updated checkpoint..."}
 ```
 
-For MVP: single checkpoint file, overwritten.
-Later: checkpoint history for debugging/replay.
+The latest checkpoint for a session is the last checkpoint record for that session ID.
+
+**Human-readable snapshots:**
+When a checkpoint is written, ken also writes a snapshot to `.ken/checkpoints/{session-id}.md` for human inspection. This is a convenience — the JSONL is authoritative.
 
 ---
 
-## CLI Interface
+## Ken Interface
 
-### Commands
+Ken operates as a daemon with a CLI for both human interaction and agent requests.
+
+### Daemon Operation
+
+```bash
+# Start ken daemon (runs continuously)
+ken daemon
+
+# Or run in foreground for debugging
+ken daemon --foreground
+```
+
+The daemon:
+1. Loads state from JSONL on startup
+2. Listens for agent requests (via Unix socket or HTTP)
+3. Continuously evaluates triggers
+4. Spawns agents when sessions become ready
+5. Processes incoming requests atomically
+
+### CLI Commands (Human)
 
 ```bash
 # Project
@@ -432,209 +554,254 @@ ken status                        # Show project status, active sessions
 ken create <path>                 # Create new ken
 ken edit <path>                   # Edit kenning
 ken tree                          # Show ken hierarchy
-ken interface <path>              # Edit interface definition
 
-# Session Operations (typically called by agents, not humans)
-ken wake <ken-path> \             # Spawn a new session
-  --task "description" \
-  --parent <session-id> \
-  --checkpoint-file <path>
-
-ken spawn-batch \                 # Atomic: spawn multiple + trigger
-  --children <child-specs.yaml> \
-  --trigger <trigger-spec.yaml> \
-  --checkpoint-file <path>
-
-ken checkpoint \                  # Write checkpoint for current session
-  --session <session-id> \
-  --content-file <path>
-
-ken complete \                    # Mark session complete
-  --session <session-id> \
-  --result-file <path>
-
-ken sleep \                       # Register trigger, go dormant
-  --session <session-id> \
-  --trigger <trigger-spec.yaml> \
-  --checkpoint-file <path>
-
-# Trigger Processing
-ken check                         # Evaluate triggers, move ready sessions
-ken process                       # Wake one ready session
-ken daemon                        # Continuous check + process loop
+# Manual session control
+ken wake <ken-path> \             # Manually start a session
+  --task "description"
 
 # Introspection
 ken sessions                      # List all sessions
 ken session <id>                  # Show session details
 ken pending                       # Show sessions ready to wake
-ken tree --sessions               # Show session hierarchy
 ken log <session-id>              # Show session event log
 
-# Reflection
-ken reflect <session-id>          # Record reflection for completed session
-ken reflections <ken-path>        # Show reflections for a ken
-ken improve <ken-path>            # Propose kenning improvements from reflections
+# Debugging
+ken rebuild-index                 # Rebuild index from JSONL
+ken validate                      # Check JSONL integrity
 ```
 
-### Atomic Spawn-Batch
+### Agent Requests
 
-The critical atomic operation:
+Agents communicate with ken via structured requests. These can be sent via:
+- **CLI**: `ken request <json>` (simplest for MVP)
+- **Unix socket**: Direct IPC (lower latency)
+- **HTTP**: REST API (for remote/distributed setups)
 
-```bash
-ken spawn-batch \
-  --parent-session abc123 \
-  --children children.yaml \
-  --parent-trigger trigger.yaml \
-  --parent-checkpoint checkpoint.md
+**Request types:**
+
+```json
+// Checkpoint
+{"type":"checkpoint","session_id":"abc123","content":"...what I've done, what's next..."}
+
+// Spawn children + sleep with trigger (atomic)
+{"type":"spawn_and_sleep","session_id":"abc123","children":[
+  {"ken":"core/cli","task":"build parser"},
+  {"ken":"core/state","task":"implement persistence"}
+],"trigger":{"all_complete":"__CHILDREN__"},"checkpoint":"...my context..."}
+
+// Complete
+{"type":"complete","session_id":"abc123","result":"...what I produced..."}
+
+// Simple sleep (no spawn)
+{"type":"sleep","session_id":"abc123","trigger":{"timeout_seconds":3600},"checkpoint":"..."}
 ```
 
-**children.yaml:**
-```yaml
-- ken: core/cli
-  task: "Build argument parser"
+**Response format:**
 
-- ken: core/state
-  task: "Implement session persistence"
+```json
+// Success
+{"ok":true,"data":{...}}
 
-- ken: core/triggers
-  task: "Implement wake trigger evaluation"
+// Failure
+{"ok":false,"error":"description of what went wrong"}
 ```
 
-**trigger.yaml:**
-```yaml
-wake_when:
-  all_complete: [__CHILD_0__, __CHILD_1__, __CHILD_2__]
+**Atomicity guarantee:**
+When an agent sends `spawn_and_sleep`:
+1. All children are created
+2. Parent trigger is registered
+3. Parent status becomes `sleeping`
+4. Parent checkpoint is saved
+
+Either ALL of these happen, or NONE. The agent can rely on this.
+
+### Atomic Operations
+
+The critical atomic operation is `spawn_and_sleep` — creating children and registering a wake trigger in one step.
+
+**Agent sends:**
+```json
+{
+  "type": "spawn_and_sleep",
+  "session_id": "abc123",
+  "children": [
+    {"ken": "core/cli", "task": "Build argument parser"},
+    {"ken": "core/state", "task": "Implement session persistence"},
+    {"ken": "core/triggers", "task": "Implement wake trigger evaluation"}
+  ],
+  "trigger": {"all_complete": "__CHILDREN__"},
+  "checkpoint": "## Context\nI'm building the ken system...\n## Next\nIntegrate when children complete"
+}
 ```
 
-**Behavior:**
-1. Begin transaction
-2. Create child session records (get IDs)
-3. Substitute `__CHILD_N__` with actual IDs in trigger
-4. Write parent checkpoint with children listed
-5. Write parent trigger
-6. Update parent status to `sleeping`
-7. Commit transaction (atomic rename)
-8. Add children to `pending/` for spawning
+**Ken processes atomically:**
+1. Generate session IDs for all children
+2. Substitute `__CHILDREN__` with actual child IDs in trigger
+3. Prepare all JSONL records:
+   - Child session `create` records
+   - Parent `spawn` record (lists children)
+   - Parent `checkpoint` record
+   - Parent `sleep` record (with trigger)
+   - Parent `status` → `sleeping`
+4. Write all records to JSONL in single `write()` call (atomic for small writes)
+5. Update in-memory index
+6. Mark children as `pending` (ready to wake)
 
-If any step fails: rollback, parent continues as active (can retry).
+**If write fails:** Nothing is committed. Agent receives error, can retry.
+
+**JSONL atomicity:**
+- All records for one atomic operation are written together
+- They share a transaction ID for grouping
+- On recovery, incomplete transactions (missing final record) are rolled back
+
+```jsonl
+{"ts":"...","tx":"tx-001","op":"create","sid":"def456","ken":"core/cli","task":"..."}
+{"ts":"...","tx":"tx-001","op":"create","sid":"ghi789","ken":"core/state","task":"..."}
+{"ts":"...","tx":"tx-001","op":"spawn","sid":"abc123","children":["def456","ghi789"]}
+{"ts":"...","tx":"tx-001","op":"checkpoint","sid":"abc123","content":"..."}
+{"ts":"...","tx":"tx-001","op":"sleep","sid":"abc123","trigger":{...}}
+{"ts":"...","tx":"tx-001","op":"status","sid":"abc123","status":"sleeping"}
+{"ts":"...","tx":"tx-001","op":"commit"}
+```
+
+The final `commit` record marks the transaction complete. On replay, transactions without `commit` are ignored.
 
 ---
 
 ## Integration with Claude Code
 
-### Spawning Sessions
+### How Ken Spawns Agents
 
-From within a Claude Code session (agent), spawn children using:
+Ken uses Claude Code (the `claude` CLI) to spawn agent instances:
 
-```python
-# Option A: Shell out to ken CLI
-subprocess.run([
-    'ken', 'spawn-batch',
-    '--parent-session', my_session_id,
-    '--children', 'children.yaml',
-    '--parent-trigger', 'trigger.yaml',
-    '--parent-checkpoint', 'checkpoint.md'
-])
-
-# Option B: Task tool (if ken provides MCP integration)
-# The agent uses Task tool, ken intercepts/wraps
+```bash
+claude --print --output-format stream-json \
+  --system-prompt "$(cat system_prompt.txt)" \
+  --prompt "$(cat initial_prompt.txt)"
 ```
 
-### Session Context
+**System prompt includes:**
+- Session ID and ken path
+- How to communicate with ken (request format)
+- What commands are available
 
-When an agent wakes, it receives:
+**Initial prompt includes:**
+- The kenning frames (walked one by one, or delivered as context)
+- The task
+- Parent checkpoint (if resuming)
+- Child results (if children completed)
+
+### Agent Communication with Ken
+
+From within a Claude Code session, agents send requests to ken:
+
+```bash
+# Via CLI (simplest)
+ken request '{"type":"checkpoint","session_id":"abc123","content":"..."}'
+
+# Response comes on stdout as JSON
+{"ok":true}
+```
+
+The agent (Claude) can construct these JSON requests and parse responses.
+
+### Session Context Delivered to Agent
+
+When ken wakes an agent, it provides:
 
 ```markdown
-# Session Context
+# Ken Session: {session-id}
 
-## Session ID
-{session-id}
+You are an AI agent working within the ken system. Your session ID is `{session-id}`.
 
-## Ken
+## Your Ken
 {ken-path}
 
-## Kenning
-[The kenning frames were already walked — understanding is constructed]
-
-## Task
+## Your Task
 {task description}
 
-## Parent Context (if resuming/recovering)
+## Communication with Ken
+Send requests using: ken request '<json>'
+
+Available request types:
+- checkpoint: Save your state
+- spawn_and_sleep: Create children, sleep until they complete
+- complete: Finish your session with a result
+- sleep: Sleep until a trigger (timeout, etc.)
+
+## Context
+
+### Previous Checkpoint (if resuming)
 {checkpoint content from before sleep}
 
-## Child Results (if children completed)
-### Child: {child-id} ({child-ken})
+### Child Results (if children completed)
+#### {child-ken} ({child-id})
 {child result content}
 
-### Child: {child-id} ({child-ken})
+#### {child-ken} ({child-id})
 {child result content}
 
-## Available Commands
-- ken checkpoint --session {session-id} --content-file <path>
-- ken spawn-batch --parent-session {session-id} ...
-- ken complete --session {session-id} --result-file <path>
-- ken sleep --session {session-id} --trigger <spec> --checkpoint-file <path>
+---
+
+Now: Walk through the kenning to build your understanding, then proceed with your task.
+
+{kenning frames follow}
 ```
 
-### Process Flow
+### Execution Flow
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                      EXECUTION FLOW                              │
+│                      KEN DAEMON (running)                        │
 └─────────────────────────────────────────────────────────────────┘
-
-Human or Agent
       │
-      │ ken wake core/foo --task "do something"
+      │ Trigger satisfied OR manual wake request
       ▼
-┌─────────────┐
-│  ken CLI    │
-│             │
-│ 1. Create session record
-│ 2. Load kenning
-│ 3. Spawn Claude Code instance
-│ 4. Feed kenning frames
-│ 5. Deliver task + context
-└─────┬───────┘
+┌─────────────────────────────────────────────────────────────────┐
+│  1. Load session from JSONL                                      │
+│  2. Load kenning for session's ken                               │
+│  3. Gather context (checkpoint, child results)                   │
+│  4. Spawn Claude Code instance with context                      │
+└─────────────────────────────────────────────────────────────────┘
       │
       ▼
-┌─────────────┐
-│   Agent     │
-│             │
-│ - Works on task
-│ - May call ken checkpoint
-│ - May call ken spawn-batch
-│ - Calls ken complete OR ken sleep
-└─────┬───────┘
+┌─────────────────────────────────────────────────────────────────┐
+│   AGENT (Claude Code instance)                                   │
+│                                                                  │
+│   - Walks through kenning (builds understanding)                 │
+│   - Works on task                                                │
+│   - Sends requests to ken:                                       │
+│       • checkpoint (save state)                                  │
+│       • spawn_and_sleep (create children, wait)                  │
+│       • complete (done, here's result)                           │
+│       • sleep (wait for trigger)                                 │
+└─────────────────────────────────────────────────────────────────┘
       │
+      │ Request received by ken daemon
       ▼
-┌─────────────┐         ┌─────────────┐
-│  Complete   │   OR    │  Sleeping   │
-│             │         │             │
-│ Result      │         │ Waiting for │
-│ stored      │         │ trigger     │
-└─────────────┘         └──────┬──────┘
-                               │
-                               │ ken check (periodic)
-                               │ trigger satisfied
-                               ▼
-                        ┌─────────────┐
-                        │   Ready     │
-                        │             │
-                        │ In pending/ │
-                        │ queue       │
-                        └──────┬──────┘
-                               │
-                               │ ken process
-                               ▼
-                        ┌─────────────┐
-                        │   Agent     │
-                        │  (resumed)  │
-                        │             │
-                        │ Continues   │
-                        │ with child  │
-                        │ results     │
-                        └─────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│   KEN DAEMON                                                     │
+│                                                                  │
+│   - Processes request atomically                                 │
+│   - Writes to JSONL                                              │
+│   - Updates indexes                                              │
+│   - If spawn_and_sleep: marks children pending, parent sleeping  │
+│   - If complete: marks session complete, checks parent triggers  │
+│   - Returns response to agent                                    │
+└─────────────────────────────────────────────────────────────────┘
+      │
+      │ Continuous loop
+      ▼
+┌─────────────────────────────────────────────────────────────────┐
+│   TRIGGER EVALUATION (continuous)                                │
+│                                                                  │
+│   For each sleeping session:                                     │
+│     - Check if trigger condition is met                          │
+│     - If met: mark session as pending                            │
+│                                                                  │
+│   For each pending session:                                      │
+│     - Spawn agent (back to top)                                  │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -685,41 +852,30 @@ If atomic operation (spawn-batch) fails partway:
 
 ---
 
-## Event Log (Optional)
+## Event Log
 
-For debugging and replay, sessions can maintain an event log:
+The JSONL storage model means we have a complete event log by default — `sessions.jsonl` IS the event log.
 
-```yaml
-# events.yaml
-- ts: "2026-02-01T10:00:00Z"
-  type: wake
-  kenning_version: 3
+**Global event stream** (`.ken/events.jsonl`):
 
-- ts: "2026-02-01T10:05:00Z"
-  type: checkpoint
-  summary: "Reviewed interfaces"
+For cross-session debugging, ken also maintains a unified event stream:
 
-- ts: "2026-02-01T10:10:00Z"
-  type: spawn
-  children:
-    - id: session-B
-      ken: core/cli
-    - id: session-C
-      ken: core/state
-
-- ts: "2026-02-01T10:10:01Z"
-  type: sleep
-  trigger: {all_complete: [session-B, session-C]}
-
-- ts: "2026-02-01T11:30:00Z"
-  type: wake
-  reason: trigger_satisfied
-  mode: resume  # or 'recover'
-
-- ts: "2026-02-01T11:45:00Z"
-  type: complete
-  result_summary: "Integration complete, tests passing"
+```jsonl
+{"ts":"2026-02-01T10:00:00Z","event":"session_created","sid":"abc123","ken":"core/cli"}
+{"ts":"2026-02-01T10:00:01Z","event":"agent_spawned","sid":"abc123","pid":12345}
+{"ts":"2026-02-01T10:05:00Z","event":"checkpoint","sid":"abc123","summary":"reviewed interfaces"}
+{"ts":"2026-02-01T10:10:00Z","event":"children_spawned","sid":"abc123","children":["def456","ghi789"]}
+{"ts":"2026-02-01T10:10:01Z","event":"session_sleeping","sid":"abc123"}
+{"ts":"2026-02-01T10:10:02Z","event":"agent_spawned","sid":"def456","pid":12346}
+{"ts":"2026-02-01T10:15:00Z","event":"session_complete","sid":"def456"}
+{"ts":"2026-02-01T10:20:00Z","event":"agent_spawned","sid":"ghi789","pid":12347}
+{"ts":"2026-02-01T10:30:00Z","event":"session_complete","sid":"ghi789"}
+{"ts":"2026-02-01T10:30:01Z","event":"trigger_satisfied","sid":"abc123","trigger":"all_complete"}
+{"ts":"2026-02-01T10:30:02Z","event":"agent_spawned","sid":"abc123","pid":12348,"mode":"resume"}
+{"ts":"2026-02-01T10:45:00Z","event":"session_complete","sid":"abc123"}
 ```
+
+This provides a timeline view across all sessions — useful for debugging complex workflows.
 
 ---
 
