@@ -22,12 +22,6 @@ pub enum KenError {
 
     #[error("Invalid request: {0}")]
     InvalidRequest(String),
-
-    #[error("Ken not found: {0}")]
-    KenNotFound(String),
-
-    #[error("Invalid session state: {0}")]
-    InvalidState(String),
 }
 
 pub type Result<T> = std::result::Result<T, KenError>;

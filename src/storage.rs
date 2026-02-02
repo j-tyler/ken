@@ -84,11 +84,14 @@ impl Storage {
         )?;
 
         let session = stmt.query_row(params![id], |row| {
+            let status_str: String = row.get(3)?;
+            let status = SessionStatus::from_str(&status_str)
+                .map_err(|e| rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Text, Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e))))?;
             Ok(Session {
                 id: row.get(0)?,
                 ken: row.get(1)?,
                 task: row.get(2)?,
-                status: SessionStatus::from_str(&row.get::<_, String>(3)?),
+                status,
                 parent_id: row.get(4)?,
                 trigger: row.get(5)?,
                 checkpoint: row.get(6)?,
@@ -109,11 +112,14 @@ impl Storage {
         )?;
 
         let sessions = stmt.query_map(params![status.as_str()], |row| {
+            let status_str: String = row.get(3)?;
+            let status = SessionStatus::from_str(&status_str)
+                .map_err(|e| rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Text, Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e))))?;
             Ok(Session {
                 id: row.get(0)?,
                 ken: row.get(1)?,
                 task: row.get(2)?,
-                status: SessionStatus::from_str(&row.get::<_, String>(3)?),
+                status,
                 parent_id: row.get(4)?,
                 trigger: row.get(5)?,
                 checkpoint: row.get(6)?,
@@ -134,11 +140,14 @@ impl Storage {
         )?;
 
         let sessions = stmt.query_map([], |row| {
+            let status_str: String = row.get(3)?;
+            let status = SessionStatus::from_str(&status_str)
+                .map_err(|e| rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Text, Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e))))?;
             Ok(Session {
                 id: row.get(0)?,
                 ken: row.get(1)?,
                 task: row.get(2)?,
-                status: SessionStatus::from_str(&row.get::<_, String>(3)?),
+                status,
                 parent_id: row.get(4)?,
                 trigger: row.get(5)?,
                 checkpoint: row.get(6)?,
@@ -159,11 +168,14 @@ impl Storage {
         )?;
 
         let sessions = stmt.query_map(params![parent_id], |row| {
+            let status_str: String = row.get(3)?;
+            let status = SessionStatus::from_str(&status_str)
+                .map_err(|e| rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Text, Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e))))?;
             Ok(Session {
                 id: row.get(0)?,
                 ken: row.get(1)?,
                 task: row.get(2)?,
-                status: SessionStatus::from_str(&row.get::<_, String>(3)?),
+                status,
                 parent_id: row.get(4)?,
                 trigger: row.get(5)?,
                 checkpoint: row.get(6)?,
@@ -183,6 +195,23 @@ impl Storage {
             params![status.as_str(), updated_at, id],
         )?;
         Ok(())
+    }
+
+    /// Atomically update session status only if current status matches expected.
+    /// Returns true if the update was applied, false if status didn't match.
+    /// This prevents race conditions when multiple processes try to update the same session.
+    pub fn try_update_session_status(
+        &self,
+        id: &str,
+        from_status: SessionStatus,
+        to_status: SessionStatus,
+        updated_at: &str,
+    ) -> Result<bool> {
+        let rows_changed = self.conn.execute(
+            "UPDATE sessions SET status = ?1, updated_at = ?2 WHERE id = ?3 AND status = ?4",
+            params![to_status.as_str(), updated_at, id, from_status.as_str()],
+        )?;
+        Ok(rows_changed > 0)
     }
 
     /// Update session with result (for complete)
@@ -268,6 +297,71 @@ impl Storage {
             Ok(ids) => {
                 self.commit()?;
                 Ok(ids)
+            }
+            Err(e) => {
+                let _ = self.rollback();
+                Err(e)
+            }
+        }
+    }
+
+    /// Execute atomic complete operation with event logging
+    pub fn complete_with_event(
+        &self,
+        session_id: &str,
+        result: &str,
+        updated_at: &str,
+    ) -> Result<()> {
+        self.begin_transaction()?;
+
+        let tx_result = (|| {
+            self.complete_session(session_id, result, updated_at)?;
+            self.insert_event(&Event {
+                ts: updated_at.to_string(),
+                session_id: Some(session_id.to_string()),
+                event_type: "session_completed".to_string(),
+                data: Some(result.to_string()),
+            })?;
+            Ok(())
+        })();
+
+        match tx_result {
+            Ok(()) => {
+                self.commit()?;
+                Ok(())
+            }
+            Err(e) => {
+                let _ = self.rollback();
+                Err(e)
+            }
+        }
+    }
+
+    /// Execute atomic sleep operation with event logging
+    pub fn sleep_with_event(
+        &self,
+        session_id: &str,
+        trigger: &str,
+        checkpoint: &str,
+        updated_at: &str,
+    ) -> Result<()> {
+        self.begin_transaction()?;
+
+        let tx_result = (|| {
+            self.sleep_session(session_id, trigger, checkpoint, updated_at)?;
+            self.insert_event(&Event {
+                ts: updated_at.to_string(),
+                session_id: Some(session_id.to_string()),
+                event_type: "session_sleeping".to_string(),
+                data: Some(trigger.to_string()),
+            })?;
+            Ok(())
+        })();
+
+        match tx_result {
+            Ok(()) => {
+                self.commit()?;
+                Ok(())
             }
             Err(e) => {
                 let _ = self.rollback();

@@ -1,6 +1,6 @@
 use chrono::Utc;
 use crate::error::{KenError, Result};
-use crate::session::{AgentRequest, AgentResponse, Session, SessionStatus, Event};
+use crate::session::{AgentRequest, AgentResponse, Session, SessionStatus};
 use crate::storage::{open_storage, Storage};
 
 /// Run the request command - process an agent request
@@ -9,14 +9,14 @@ pub fn run(json: &str) -> Result<()> {
         .map_err(|e| KenError::InvalidRequest(e.to_string()))?;
 
     let storage = open_storage()?;
-    let response = handle_request_with_storage(&storage, request)?;
+    let response = run_with_storage(&storage, request)?;
 
     println!("{}", serde_json::to_string(&response)?);
     Ok(())
 }
 
 /// Handle an agent request and return a response (with injected storage for testing)
-fn handle_request_with_storage(storage: &Storage, request: AgentRequest) -> Result<AgentResponse> {
+pub fn run_with_storage(storage: &Storage, request: AgentRequest) -> Result<AgentResponse> {
     let now = Utc::now().to_rfc3339();
 
     match request {
@@ -31,15 +31,8 @@ fn handle_request_with_storage(storage: &Storage, request: AgentRequest) -> Resu
                 )));
             }
 
-            // Complete the session
-            storage.complete_session(&session_id, &result, &now)?;
-
-            // Log event
-            storage.insert_event(&Event::new(
-                "session_completed",
-                Some(&session_id),
-                Some(result),
-            ))?;
+            // Atomically complete the session and log event
+            storage.complete_with_event(&session_id, &result, &now)?;
 
             Ok(AgentResponse::success(None))
         }
@@ -92,15 +85,8 @@ fn handle_request_with_storage(storage: &Storage, request: AgentRequest) -> Resu
 
             let trigger_str = serde_json::to_string(&trigger)?;
 
-            // Put session to sleep
-            storage.sleep_session(&session_id, &trigger_str, &checkpoint, &now)?;
-
-            // Log event
-            storage.insert_event(&Event::new(
-                "session_sleeping",
-                Some(&session_id),
-                Some(trigger_str),
-            ))?;
+            // Atomically put session to sleep and log event
+            storage.sleep_with_event(&session_id, &trigger_str, &checkpoint, &now)?;
 
             Ok(AgentResponse::success(None))
         }
@@ -150,7 +136,7 @@ mod tests {
             result: "all done".to_string(),
         };
 
-        let response = handle_request_with_storage(&storage, request).unwrap();
+        let response = run_with_storage(&storage, request).unwrap();
 
         assert!(response.ok);
 
@@ -173,7 +159,7 @@ mod tests {
             result: "all done".to_string(),
         };
 
-        let response = handle_request_with_storage(&storage, request).unwrap();
+        let response = run_with_storage(&storage, request).unwrap();
 
         assert!(!response.ok);
         assert!(response.error.unwrap().contains("not active"));
@@ -198,7 +184,7 @@ mod tests {
             checkpoint: "my checkpoint data".to_string(),
         };
 
-        let response = handle_request_with_storage(&storage, request).unwrap();
+        let response = run_with_storage(&storage, request).unwrap();
 
         assert!(response.ok);
 
@@ -232,7 +218,7 @@ mod tests {
             checkpoint: "waiting for timeout".to_string(),
         };
 
-        let response = handle_request_with_storage(&storage, request).unwrap();
+        let response = run_with_storage(&storage, request).unwrap();
 
         assert!(response.ok);
 

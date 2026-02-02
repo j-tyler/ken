@@ -17,20 +17,39 @@ pub fn run_with_storage(storage: &Storage) -> Result<()> {
     let sleeping = storage.get_sessions_by_status(SessionStatus::Sleeping)?;
     for session in sleeping {
         if let Some(trigger_json) = &session.trigger {
-            if let Ok(trigger) = Trigger::from_json(trigger_json) {
-                let satisfied = trigger.is_satisfied(|id| {
-                    storage.get_session(id).ok().map(|s| s.status)
-                });
+            match Trigger::from_json(trigger_json) {
+                Ok(trigger) => {
+                    let satisfied = trigger.is_satisfied_with_time(
+                        |id| storage.get_session(id).ok().map(|s| s.status),
+                        Some(&session.updated_at),
+                    );
 
-                if satisfied {
-                    // Wake this session
-                    storage.update_session_status(&session.id, SessionStatus::Pending, &now)?;
+                    if satisfied {
+                        // Atomically wake this session (only if still sleeping)
+                        let woke = storage.try_update_session_status(
+                            &session.id,
+                            SessionStatus::Sleeping,
+                            SessionStatus::Pending,
+                            &now,
+                        )?;
+                        if woke {
+                            storage.insert_event(&Event::new(
+                                "trigger_satisfied",
+                                Some(&session.id),
+                                session.trigger.clone(),
+                            ))?;
+                            println!("Woke session {} (trigger satisfied)", session.id);
+                        }
+                    }
+                }
+                Err(e) => {
+                    // Log the parsing error so it's visible for debugging
                     storage.insert_event(&Event::new(
-                        "trigger_satisfied",
+                        "trigger_parse_error",
                         Some(&session.id),
-                        session.trigger.clone(),
+                        Some(format!("Failed to parse trigger '{}': {}", trigger_json, e)),
                     ))?;
-                    println!("Woke session {} (trigger satisfied)", session.id);
+                    eprintln!("Warning: Failed to parse trigger for session {}: {}", session.id, e);
                 }
             }
         }
@@ -38,29 +57,40 @@ pub fn run_with_storage(storage: &Storage) -> Result<()> {
 
     // Then, find one pending session to activate
     let pending = storage.get_sessions_by_status(SessionStatus::Pending)?;
-    if let Some(session) = pending.first() {
-        storage.update_session_status(&session.id, SessionStatus::Active, &now)?;
-        storage.insert_event(&Event::new(
-            "session_activated",
-            Some(&session.id),
-            None,
-        ))?;
+    for session in &pending {
+        // Atomically try to activate (only if still pending)
+        let activated = storage.try_update_session_status(
+            &session.id,
+            SessionStatus::Pending,
+            SessionStatus::Active,
+            &now,
+        )?;
 
-        // Output session info for the caller to spawn an agent
-        let output = serde_json::json!({
-            "action": "spawn",
-            "session": {
-                "id": session.id,
-                "ken": session.ken,
-                "task": session.task,
-                "checkpoint": session.checkpoint,
-            }
-        });
-        println!("{}", serde_json::to_string(&output)?);
-    } else {
-        println!("{{\"action\":\"none\"}}");
+        if activated {
+            storage.insert_event(&Event::new(
+                "session_activated",
+                Some(&session.id),
+                None,
+            ))?;
+
+            // Output session info for the caller to spawn an agent
+            let output = serde_json::json!({
+                "action": "spawn",
+                "session": {
+                    "id": session.id,
+                    "ken": session.ken,
+                    "task": session.task,
+                    "checkpoint": session.checkpoint,
+                }
+            });
+            println!("{}", serde_json::to_string(&output)?);
+            return Ok(());
+        }
+        // If activation failed (race condition), try the next pending session
     }
 
+    // No pending sessions could be activated
+    println!("{{\"action\":\"none\"}}");
     Ok(())
 }
 

@@ -1,11 +1,16 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::Path;
 use crate::error::{KenError, Result};
 use crate::storage::Storage;
 
-/// Run the init command - creates .ken directory with ken.db
+/// Run the init command - creates .ken directory with ken.db in current directory
 pub fn run() -> Result<()> {
-    let ken_dir = PathBuf::from(".ken");
+    run_at_path(Path::new("."))
+}
+
+/// Initialize ken at a specific path (for testing and flexibility)
+pub fn run_at_path(base_path: &Path) -> Result<()> {
+    let ken_dir = base_path.join(".ken");
 
     if ken_dir.exists() {
         return Err(KenError::AlreadyInitialized);
@@ -27,24 +32,10 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
-    /// Test version that accepts a specific path
-    fn init_at_path(base_path: &std::path::Path) -> Result<()> {
-        let ken_dir = base_path.join(".ken");
-
-        if ken_dir.exists() {
-            return Err(KenError::AlreadyInitialized);
-        }
-
-        std::fs::create_dir(&ken_dir)?;
-        let db_path = ken_dir.join("ken.db");
-        Storage::create(&db_path)?;
-        Ok(())
-    }
-
     #[test]
     fn test_init_creates_ken_directory() {
         let dir = tempdir().unwrap();
-        let result = init_at_path(dir.path());
+        let result = run_at_path(dir.path());
 
         assert!(result.is_ok());
         assert!(dir.path().join(".ken").exists());
@@ -56,10 +47,10 @@ mod tests {
         let dir = tempdir().unwrap();
 
         // First init should succeed
-        let _ = init_at_path(dir.path());
+        let _ = run_at_path(dir.path());
 
         // Second init should fail
-        let result = init_at_path(dir.path());
+        let result = run_at_path(dir.path());
 
         assert!(result.is_err());
         match result {

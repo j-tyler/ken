@@ -540,12 +540,6 @@ Agents call `ken request '<json>'` with **3 request types**:
 
 // Sleep without spawning (wait for timeout, etc.)
 {"type":"sleep","session_id":"abc123","trigger":{"timeout_seconds":3600},"checkpoint":"..."}
-
-// Complete
-{"type":"complete","session_id":"abc123","result":"...what I produced..."}
-
-// Simple sleep (no spawn)
-{"type":"sleep","session_id":"abc123","trigger":{"timeout_seconds":3600},"checkpoint":"..."}
 ```
 
 **Response format:**

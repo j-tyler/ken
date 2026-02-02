@@ -24,14 +24,14 @@ impl SessionStatus {
         }
     }
 
-    pub fn from_str(s: &str) -> Self {
+    pub fn from_str(s: &str) -> Result<Self, String> {
         match s {
-            "pending" => SessionStatus::Pending,
-            "active" => SessionStatus::Active,
-            "sleeping" => SessionStatus::Sleeping,
-            "complete" => SessionStatus::Complete,
-            "failed" => SessionStatus::Failed,
-            _ => SessionStatus::Pending,
+            "pending" => Ok(SessionStatus::Pending),
+            "active" => Ok(SessionStatus::Active),
+            "sleeping" => Ok(SessionStatus::Sleeping),
+            "complete" => Ok(SessionStatus::Complete),
+            "failed" => Ok(SessionStatus::Failed),
+            _ => Err(format!("Unknown session status: {}", s)),
         }
     }
 }
@@ -118,17 +118,25 @@ pub enum Trigger {
 
 impl Trigger {
     /// Parse trigger from JSON string
-    pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
-        // Handle the __CHILDREN__ placeholder specially
+    /// Returns None if the trigger contains unresolved __CHILDREN__ placeholder
+    pub fn from_json(json: &str) -> Result<Self, String> {
+        // Reject unresolved __CHILDREN__ placeholder - this indicates a bug
+        // where the trigger was stored before being resolved
         if json.contains("__CHILDREN__") {
-            // This is a template that will be filled in later
-            return Ok(Trigger::AllComplete(vec![]));
+            return Err(
+                "Unresolved __CHILDREN__ placeholder in trigger - trigger was not properly resolved before storage".to_string()
+            );
         }
-        serde_json::from_str(json)
+        serde_json::from_str(json).map_err(|e| e.to_string())
     }
 
     /// Check if trigger is satisfied given the current session states
-    pub fn is_satisfied(&self, get_status: impl Fn(&str) -> Option<SessionStatus>) -> bool {
+    /// For timeout triggers, sleep_time should be the time when the session went to sleep
+    pub fn is_satisfied_with_time(
+        &self,
+        get_status: impl Fn(&str) -> Option<SessionStatus>,
+        sleep_time: Option<&str>,
+    ) -> bool {
         match self {
             Trigger::AllComplete(ids) => {
                 ids.iter().all(|id| {
@@ -140,11 +148,22 @@ impl Trigger {
                     matches!(get_status(id), Some(SessionStatus::Complete))
                 })
             }
-            Trigger::TimeoutSeconds(_) => {
-                // TODO: implement timeout checking
+            Trigger::TimeoutSeconds(seconds) => {
+                if let Some(sleep_time_str) = sleep_time {
+                    if let Ok(sleep_dt) = chrono::DateTime::parse_from_rfc3339(sleep_time_str) {
+                        let now = Utc::now();
+                        let elapsed = now.signed_duration_since(sleep_dt);
+                        return elapsed.num_seconds() >= *seconds as i64;
+                    }
+                }
                 false
             }
         }
+    }
+
+    /// Check if trigger is satisfied (convenience method for non-timeout triggers)
+    pub fn is_satisfied(&self, get_status: impl Fn(&str) -> Option<SessionStatus>) -> bool {
+        self.is_satisfied_with_time(get_status, None)
     }
 }
 
@@ -235,9 +254,16 @@ mod tests {
             SessionStatus::Failed,
         ] {
             let s = status.as_str();
-            let recovered = SessionStatus::from_str(s);
+            let recovered = SessionStatus::from_str(s).unwrap();
             assert_eq!(recovered, status);
         }
+    }
+
+    #[test]
+    fn test_session_status_from_str_invalid() {
+        let result = SessionStatus::from_str("invalid_status");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Unknown session status"));
     }
 
     #[test]
@@ -279,6 +305,37 @@ mod tests {
             }
         });
         assert!(satisfied);
+    }
+
+    #[test]
+    fn test_trigger_timeout_satisfied() {
+        let trigger = Trigger::TimeoutSeconds(1); // 1 second timeout
+
+        // Sleep time 2 seconds ago
+        let sleep_time = (chrono::Utc::now() - chrono::Duration::seconds(2)).to_rfc3339();
+
+        let satisfied = trigger.is_satisfied_with_time(|_| None, Some(&sleep_time));
+        assert!(satisfied);
+    }
+
+    #[test]
+    fn test_trigger_timeout_not_satisfied() {
+        let trigger = Trigger::TimeoutSeconds(60); // 60 second timeout
+
+        // Sleep time just now
+        let sleep_time = chrono::Utc::now().to_rfc3339();
+
+        let satisfied = trigger.is_satisfied_with_time(|_| None, Some(&sleep_time));
+        assert!(!satisfied);
+    }
+
+    #[test]
+    fn test_trigger_timeout_no_sleep_time() {
+        let trigger = Trigger::TimeoutSeconds(1);
+
+        // No sleep time provided
+        let satisfied = trigger.is_satisfied_with_time(|_| None, None);
+        assert!(!satisfied);
     }
 
     #[test]

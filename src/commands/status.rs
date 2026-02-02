@@ -81,6 +81,22 @@ pub fn run_with_storage(storage: &Storage) -> Result<()> {
                 println!("    trigger: {}", trigger);
             }
         }
+        println!();
+    }
+
+    // Show failed sessions (important for debugging)
+    let failed_sessions: Vec<_> = sessions.iter()
+        .filter(|s| s.status == SessionStatus::Failed)
+        .collect();
+
+    if !failed_sessions.is_empty() {
+        println!("Failed sessions:");
+        for session in failed_sessions {
+            println!("  {} - {} ({})", session.id, session.task, session.ken);
+            if let Some(result) = &session.result {
+                println!("    error: {}", result);
+            }
+        }
     }
 
     Ok(())

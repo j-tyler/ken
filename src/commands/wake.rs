@@ -10,9 +10,8 @@ pub fn run(ken: &str, task: &str) -> Result<()> {
 
 /// Wake command implementation that accepts a storage instance (for testing)
 pub fn run_with_storage(storage: &Storage, ken: &str, task: &str) -> Result<()> {
-    // Create new session
-    let mut session = Session::new(ken, task, None);
-    session.status = crate::session::SessionStatus::Pending;
+    // Create new session (status is Pending by default)
+    let session = Session::new(ken, task, None);
 
     storage.insert_session(&session)?;
 
