@@ -1,0 +1,13 @@
+{
+  "code": "KEN_BIND_VALIDATION_FAILED",
+  "ken_path": "review/pr",
+  "bind_object_present": true,
+  "violations": [
+    {
+      "path": "baseline.files",
+      "violation_type": "type_mismatch",
+      "expected": "array<string>",
+      "received_summary": "string"
+    }
+  ]
+}

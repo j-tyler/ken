@@ -15,6 +15,15 @@ export ANTHROPIC_API_KEY=your-key-here
 python ken-bootstrap.py core/kenning-parser --task "implement the frame parser in src/kenning.py"
 ```
 
+## Specification Status
+
+This README documents the **bootstrap MVP** workflow and simplified kenning format.
+
+For the current canonical contract/runtime design (kenning contract, deterministic bind validation, wake semantics), use:
+- `FOUNDATION.md`
+- `IMPLEMENTATION.md`
+- `QUICKREF.md`
+
 ## What Happens
 
 1. The script loads `kens/core/kenning-parser/kenning.md`

@@ -123,6 +123,46 @@ By the time it sees the actual code, the code is almost obvious. It's not readin
 
 ---
 
+## Frame 6.5: Why Kennings Beat One-Shot Prompts for Hard Work
+
+One-shot prompts are useful. They can capture objectives, format requirements, and constraints in a single message. But several high-leverage qualities of deep work are difficult to achieve in one shot because they depend on *ordered state construction*.
+
+Below are the capabilities we care about most, why one-shots struggle, and why kennings are a natural fit.
+
+### 1) Correct frame of reference
+
+- **What it is:** Starting from the right mental lens for this task (architecture-first, risk-first, user-impact-first, etc.).
+- **Why one-shots struggle:** If the initial lens is slightly wrong, all downstream reasoning is biased. One-shot prompts often mix multiple possible lenses at once.
+- **Why kennings fit naturally:** Early frames can force orientation before execution: why this system exists, what matters, what failure looks like. The lens is set before details arrive.
+
+### 2) Latent momentum
+
+- **What it is:** The constructive carry-forward effect where each generated output improves the next reasoning step.
+- **Why one-shots struggle:** There is little chance to accumulate directional momentum; the model compresses too many inference steps into one pass.
+- **Why kennings fit naturally:** Each frame's output becomes context for the next frame, creating deliberate momentum rather than accidental drift.
+
+### 3) Relevant context selection
+
+- **What it is:** Surfacing exactly the information needed now, while excluding distractors.
+- **Why one-shots struggle:** Large mixed context causes attention dilution; important details compete with irrelevant ones.
+- **Why kennings fit naturally:** Context can be staged per frame (e.g., baseline files first, diff second, interface constraints third), matching information to the current reasoning need.
+
+### 4) Activation path / sequencing
+
+- **What it is:** The order in which concepts are activated in context.
+- **Why one-shots struggle:** A single prompt cannot strongly enforce multi-step activation order once everything is presented at once.
+- **Why kennings fit naturally:** Sequence is the mechanism. A→B→C is encoded directly in frames, preserving causality in understanding.
+
+### 5) Iterative refinement + constraint discovery over time
+
+- **What it is:** Improving outputs by discovering hidden constraints during work and feeding them back into future preparation.
+- **Why one-shots struggle:** Discovered constraints are typically lost after completion; there is no built-in accumulation loop.
+- **Why kennings fit naturally:** Reflections capture what was missing, then the kenning evolves. Preparation quality compounds across sessions.
+
+In short: one-shot prompting can specify a target. Kennings can construct a path to that target.
+
+---
+
 ## Frame 7: The Collaboration Pattern
 
 This system emerged from a specific kind of collaboration:
@@ -166,6 +206,7 @@ Nothing is built yet. The tool exists only as design. The work ahead:
 3. Refine the kenning format through actual use
 4. Develop the improvement/evolution cycle
 5. Scale to complex multi-ken projects
+6. Add kenning search and selection (match task → right kenning contract)
 
 You are at the beginning.
 
@@ -193,6 +234,7 @@ You are at the beginning.
 │    kens/                 # ken definitions                       │
 │      {path}/                                                     │
 │        kenning.md        # the reconstruction sequence           │
+│        kenning_guide.md  # why this kenning is shaped this way   │
 │        interface.md      # what this ken exposes                 │
 │        meta.yaml         # parent, peers, version                │
 │    reflections/          # post-session reflections              │
@@ -211,33 +253,30 @@ You are at the beginning.
 ```bash
 # Project Management
 ken init {project-name}           # Initialize new project
+ken new {path}                    # Create new ken
 ken tree                          # Display ken hierarchy
 ken status                        # Show project status
 
-# Ken Management  
-ken create {path}                 # Create new ken
-  --parent {path}                 # Specify parent ken
-  --peers {path,path,...}         # Specify peer kens
+# Ken Editing
 ken edit {path}                   # Edit a ken's kenning
 ken interface {path}              # Edit a ken's interface
 
 # Session Lifecycle
 ken wake {path}                   # Wake into a ken (interactive)
   --task "description"            # Wake with specific task
-ken up                            # Show parent context (during session)
-ken down                          # Show dependent kens (during session)
-ken peers                         # Show peer kens (during session)
+ken context up                    # Show parent context (during session)
+ken context down                  # Show dependent kens (during session)
+ken context peers                 # Show peer kens (during session)
 ken reflect                       # Write reflection (end of session)
-ken sleep                         # End session
 
 # Evolution
-ken review {path}                 # Review recent reflections
-  --last {n}                      # Number of reflections to show
-ken improve {path}                # Propose kenning improvement
-ken test {path}                   # A/B test proposed vs current
+ken journal {path}                # Read reflections
+ken evolve {path}                 # Propose kenning improvement
+ken trial {path}                  # A/B test proposed vs current
   --agents {n}                    # Number of test agents
-ken promote {path}                # Promote tested improvement
-ken history {path}                # View kenning evolution
+ken adopt {path}                  # Promote tested improvement
+ken lineage {path}                # View kenning evolution
+ken search {query}                # Find candidate kennings by task/contract fit
 ```
 
 ### The Wake Cycle (Internal)
@@ -246,46 +285,230 @@ When `ken wake {path} --task "..."` executes:
 
 ```
 1. Load kenning.md for {path}
-2. Load meta.yaml (parent, peers, version info)
-3. Load interface.md for context
-4. Spawn AI agent (e.g., claude-code in chat mode)
-5. For each frame in kenning:
-   a. Send frame prompt to agent
+2. Read kenning bind contract (`bind_requirements.schema_format` + `bind_requirements.fields`)
+3. Load meta.yaml (parent, peers, version info)
+4. Load interface.md for context
+5. Validate provided bind payload against kenning bind schema
+   - If invalid/missing required binds: reject wake with actionable error
+6. Resolve bind payload into frame inputs
+7. Spawn AI agent (e.g., claude-code in chat mode)
+8. For each frame in kenning:
+   a. Send resolved frame prompt to agent
    b. Capture agent response
    c. Response becomes part of context
-6. Send task prompt
-7. Agent works (has access to codebase, can create files, run tests)
-8. Work complete signal received
-9. Send reflection prompt
-10. Capture reflection, save to reflections/{path}/{timestamp}.md
-11. End agent session
-12. Return results to caller
+9. Send task prompt
+10. Agent works (has access to codebase, can create files, run tests)
+11. Work complete signal received
+12. Send reflection prompt
+13. Capture reflection, save to reflections/{path}/{timestamp}.md
+14. End agent session
+15. Return results to caller
 ```
 
-### Kenning Format
+### Kenning Contract and Binding Enforcement
+
+A kenning should declare a formal contract that `ken` enforces before wake begins.
+
+`frame_of_reference`, `task_types`, and `success_criteria` are for caller/agent discovery and kenning selection (for example via `ken search`), not for `ken wake` runtime execution logic.
+
+**Core rule:** if a kenning requires bindings and the caller does not provide valid bind data, `ken wake` must reject the wake request and return a structured error that explains exactly what is wrong, what is missing, and why each required bind is needed by this kenning.
+
+This keeps responsibilities clean:
+
+- **Orchestrator/caller:** selects the kenning and provides bind payloads that satisfy schema.
+- **ken runtime:** validates payloads and resolves bindings into frames.
+- **Awakened agent:** focuses only on interpretation, execution, and reflection.
+
+The awakened agent does not coordinate with an orchestrator directly. During task completion it may naturally gather additional context from the workspace/tools. Bind data is caller-supplied pre-bundled context delivered during wake, not the total context the agent may later use.
+
+### Operational Semantics (for implementers)
+
+To reduce ambiguity between design intent and runtime behavior:
+
+- For `ken wake`, only bind-contract elements are normative runtime input (`bind_requirements.schema_format` and `bind_requirements.fields`).
+- Any field with `required: true` must be present with schema-valid value before wake can start.
+- Contract validation happens before agent spawn.
+- Validation failures are first-class outcomes (not exceptions), returned to caller with explicit remediation.
+- Validation errors include bind-purpose metadata authored in the kenning so callers understand what each missing field is used for.
+- Frame sequencing consumes only validated/resolved bindings plus prior frame outputs.
+
+This makes wake deterministic for orchestrators and predictable for awakened agents.
+
+### Ken as Software (Non-Agentic Runtime)
+
+`ken` is classical deterministic software, not an autonomous agent.
+
+- It parses files, validates schemas, resolves bindings, orchestrates ordered prompts, and persists artifacts.
+- It does **not** perform open-ended reasoning or agentic planning on behalf of the user.
+- All non-deterministic cognition happens in the awakened AI instance, not in `ken` runtime.
+
+Design boundary:
+- **ken runtime:** deterministic orchestration and validation.
+- **awakened agent:** reasoning, synthesis, and work execution.
+
+### Deterministic Bind Error Derivation
+
+To make bind errors deterministic, the kenning contract must contain enough information for `ken` to derive validation errors mechanically (not by model inference inside runtime). Callers/agents remain the intelligent layer that interprets those errors and submits corrected subsequent wake calls.
+
+Required derivation inputs:
+- `bind_requirements.schema_format` (declared schema dialect)
+- `bind_requirements.fields` (per-field type/required + documentation metadata)
+- Stable field paths as keys in `bind_requirements.fields` (for example: `pr.diff`, `baseline.files`)
+
+Runtime derivation rule:
+- For every schema violation at path `P`, `ken` looks up `fields[P]` and attaches field documentation metadata to the error.
+- If a field spec is missing required documentation metadata, contract validation fails before wake with `KEN_CONTRACT_INVALID`.
+
+This means bind errors are generated from deterministic table lookups plus schema validation output, not freeform reasoning.
+
+### Bind Schema Format (ken_bind_schema_v1)
+
+`bind_requirements.schema_format` is currently a single explicit format:
+- `ken_bind_schema_v1`
+
+In `ken_bind_schema_v1`:
+- `bind_requirements.fields` is a map of field-path → field spec.
+- Every field spec must include:
+  - `type`
+  - `required`
+  - `description`
+  - `purpose`
+  - `used_by_frames` (array of frame numbers)
+  - `source_guidance`
+- `required: true` means missing field is a validation failure.
+- `required: false` means field is optional and used if provided.
+
+Schema representation and allowed types:
+- `ken_bind_schema_v1` is a **KEN-specific typed field map**, not arbitrary JSON Schema.
+- Allowed values for `type` are exactly: `string`, `number`, `integer`, `boolean`, `object`, `array`.
+- `type` comparison is case-sensitive.
+- If `type` is `array`, `items` is required and must be one of: `string`, `number`, `integer`, `boolean`, `object`.
+- If `type` is not `array`, `items` must not be present.
+
+Invalid type behavior:
+- Unknown types (for example `type: Elephant`) are a **contract authoring error**, not a payload error.
+- Runtime must fail contract compilation before wake with `KEN_CONTRACT_INVALID` and include:
+  - `invalid_field_types`: map of field path → invalid type value
+  - `allowed_types`: canonical allowed list for this schema format
+
+Unsupported `schema_format` values must fail with `KEN_CONTRACT_INVALID`.
+
+### Kenning Format (Contract + Frames)
 
 ```markdown
 # {Ken Name}
+
+## Contract
+frame_of_reference: |
+  {What lens this wake establishes and why}
+task_types:
+  - {task shape this kenning is designed for}
+  - {additional supported task shape}
+success_criteria:
+  - {observable outcome for a successful awakened agent}
+  - {quality/risk bar}
+
+bind_requirements:
+  schema_format: ken_bind_schema_v1
+  fields:
+    {fieldA}:                    # key is field path (e.g., "pr.diff")
+      type: string
+      required: true
+      description: {what this field must contain}
+      purpose: {why this field matters}
+      used_by_frames: [2, 4]
+      source_guidance: {where caller should gather this value}
+
+    {fieldB}:
+      type: array
+      items: string
+      required: false
+      description: {what this field must contain}
+      purpose: {what reasoning this unlocks}
+      used_by_frames: [3]
+      source_guidance: {where caller should gather this value}
 
 ## Meta
 parent: {path or null}
 peers: [{path}, {path}, ...]
 version: {n}
 
-## Frame 1: {Title}
+## Frames
+### Frame 1: {Title}
 {Generative prompt — designed to make agent produce understanding}
 
-## Frame 2: {Title}
+### Frame 2: {Title}
 {Builds on Frame 1...}
-
-## Frame 3: {Title}
-{Builds on Frame 2...}
 
 ...
 
-## Frame N: Grounding
+### Frame N: Grounding
 {Final frame: what exists, what's the current state, what's the task context}
 ```
+
+### Bind Field Specification Standard (Deterministic and Explicit)
+
+Bind field specs are deterministic runtime inputs, not lightweight annotations.
+
+`ken` does not attempt to judge semantic quality of provided bind data. It validates declared field types/required flags and returns declared field documentation when validation fails so callers can correct the next invocation.
+
+Every field in `bind_requirements.fields` must include:
+- `description`: what the field contains (precise scope and boundaries)
+- `purpose`: why the field exists and what reasoning it unlocks
+- `used_by_frames`: exactly where in the sequence it is consumed
+- `source_guidance`: preferred upstream sources and extraction method
+
+Design intent: each field spec carries both validation semantics (`type`, `required`, optional `items`) and documentation semantics (`description`, `purpose`, `used_by_frames`, `source_guidance`).
+
+### Kenning Modification Guide (kenning_guide.md)
+
+Each ken should maintain a `kenning_guide.md` as accumulated design memory used only when improving/updating that kenning.
+
+Purpose:
+- Preserve *why* key wording, sequence, and constraints exist.
+- Record what changed, why it changed, and what regressions it prevented.
+- Prevent future improvement cycles from accidentally reverting important gains.
+
+Use in lifecycle:
+- `kenning_guide.md` is used only for kenning-modification workflows (`ken improve`, `ken promote`, human/agent editors).
+- `ken wake` does not read or depend on `kenning_guide.md`.
+
+Minimum required sections:
+
+```markdown
+# Kenning Modification Guide: {ken-path}
+
+## Invariants (Do Not Change Lightly)
+- {ordering dependency and why it matters}
+- {critical wording choice and intended effect}
+
+## Change Log
+### {date} — {change summary}
+- What changed:
+- Why:
+- Evidence (reflection IDs / trial IDs):
+- Risk of reverting:
+
+## Ordering Dependencies
+- Frame A must precede Frame B because:
+- Frame C must remain after bind validation because:
+
+## Wording Rationale
+- Phrase: "..."
+  - Why this wording:
+  - Failure mode if simplified:
+
+## Known Anti-Patterns
+- {change that looked cleaner but reduced wake quality}
+
+## Safe Edit Checklist
+- Did this modify an invariant?
+- If ordering changed, did we run comparative trial?
+- Did we update contract field docs and error semantics?
+- Did we append rationale to this guide?
+```
+
+Improvement workflow rule: every accepted `ken improve` change should update both `kenning.md` and `kenning_guide.md` together.
 
 ### Reflection Format
 

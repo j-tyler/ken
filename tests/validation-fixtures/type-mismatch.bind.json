@@ -1,0 +1,4 @@
+{
+  "pr.diff": "diff --git a/x b/x\n@@ -1 +1 @@\n",
+  "baseline.files": "src/a.py"
+}
