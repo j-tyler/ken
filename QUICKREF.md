@@ -12,6 +12,8 @@
 
 **Frame** (noun): A single prompt in a kenning. Designed to make the instance *produce* an insight, not receive it.
 
+**Kenning contract**: Required metadata for wake selection and validation: frame of reference, task types, success criteria, and bind requirements/schema.
+
 ## The Lifecycle
 
 ```
@@ -51,6 +53,7 @@ ken evolve {path}            # Propose kenning improvement
 ken trial {path}             # A/B test improvement
 ken adopt {path}             # Accept improvement
 ken lineage {path}           # View kenning history
+ken search {query}           # Find a kenning by task + contract fit
 ```
 
 ## Project Structure
@@ -60,6 +63,7 @@ project/
   ken.yaml           # Config
   kens/{path}/
     kenning.md       # Reconstruction sequence
+    kenning_guide.md # Why this sequence/wording/order exists
     interface.md     # Exposed interfaces
     meta.yaml        # Hierarchy, version
   reflections/{path}/
@@ -67,6 +71,49 @@ project/
   history/{path}/
     v{n}.md
 ```
+
+
+## Why Kennings for These Hard Cases?
+
+These qualities are possible to mention in one-shot prompts, but hard to *reliably realize* without sequencing:
+
+- **Correct frame of reference**: one-shots can mix lenses; kennings orient early.
+- **Latent momentum**: one-shots have little stepwise carry-forward; kennings accumulate intermediate reasoning.
+- **Relevant context selection**: one-shots overload attention; kennings stage context by phase.
+- **Activation path / sequencing**: one-shots collapse order; kennings encode A→B→C explicitly.
+- **Iterative refinement + constraint discovery**: one-shots end at output; kennings add reflection and evolution loops.
+
+
+## Binding Contract (Enforced by `ken`)
+
+A kenning can declare required bindings with an explicit schema.
+
+- If required bind data is missing/invalid, `ken wake` must reject and report exactly what is wrong, plus what each field is used for in the kenning.
+- Deterministic bind errors: schema violations + field_docs lookup + stable sorting (no LLM generation).
+- `field_docs` should be rich enough to optimize input quality, not just satisfy required keys.
+- Orchestrator/caller provides bind payloads; `ken` validates and resolves them before frames run.
+- Awakened agent should not choose binding inputs; it may request context, but runtime/orchestrator decides.
+
+## Build Rules for Next Implementing Agent
+
+1. Validate kenning contract before agent spawn.
+2. If required bind fields are missing/invalid, reject wake with machine-readable errors.
+3. Require field-level bind metadata (`purpose`, `used_by_frames`, `source_guidance`) in kenning contracts.
+4. Include quality bars and examples in field docs (`quality_bar`, `failure_modes`, `example_good`, `example_bad`).
+5. Do not auto-fill required binds from implicit context.
+6. Add `--dry-run` validation mode for orchestration pipelines.
+7. For `ken search`, rank by contract fit + bind satisfiability, then show missing binds.
+
+## Kenning Guide (Why Changes Persist)
+
+Every kenning should carry `kenning_guide.md` documenting:
+- important ordering dependencies,
+- wording choices that are intentional,
+- what changed over time and why,
+- evidence for accepted edits,
+- regressions to avoid reintroducing.
+
+Rule: if `kenning.md` changes meaningfully, `kenning_guide.md` should be updated in the same improvement cycle.
 
 ## Key Insight
 

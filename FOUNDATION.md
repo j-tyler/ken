@@ -123,6 +123,46 @@ By the time it sees the actual code, the code is almost obvious. It's not readin
 
 ---
 
+## Frame 6.5: Why Kennings Beat One-Shot Prompts for Hard Work
+
+One-shot prompts are useful. They can capture objectives, format requirements, and constraints in a single message. But several high-leverage qualities of deep work are difficult to achieve in one shot because they depend on *ordered state construction*.
+
+Below are the capabilities we care about most, why one-shots struggle, and why kennings are a natural fit.
+
+### 1) Correct frame of reference
+
+- **What it is:** Starting from the right mental lens for this task (architecture-first, risk-first, user-impact-first, etc.).
+- **Why one-shots struggle:** If the initial lens is slightly wrong, all downstream reasoning is biased. One-shot prompts often mix multiple possible lenses at once.
+- **Why kennings fit naturally:** Early frames can force orientation before execution: why this system exists, what matters, what failure looks like. The lens is set before details arrive.
+
+### 2) Latent momentum
+
+- **What it is:** The constructive carry-forward effect where each generated output improves the next reasoning step.
+- **Why one-shots struggle:** There is little chance to accumulate directional momentum; the model compresses too many inference steps into one pass.
+- **Why kennings fit naturally:** Each frame's output becomes context for the next frame, creating deliberate momentum rather than accidental drift.
+
+### 3) Relevant context selection
+
+- **What it is:** Surfacing exactly the information needed now, while excluding distractors.
+- **Why one-shots struggle:** Large mixed context causes attention dilution; important details compete with irrelevant ones.
+- **Why kennings fit naturally:** Context can be staged per frame (e.g., baseline files first, diff second, interface constraints third), matching information to the current reasoning need.
+
+### 4) Activation path / sequencing
+
+- **What it is:** The order in which concepts are activated in context.
+- **Why one-shots struggle:** A single prompt cannot strongly enforce multi-step activation order once everything is presented at once.
+- **Why kennings fit naturally:** Sequence is the mechanism. A→B→C is encoded directly in frames, preserving causality in understanding.
+
+### 5) Iterative refinement + constraint discovery over time
+
+- **What it is:** Improving outputs by discovering hidden constraints during work and feeding them back into future preparation.
+- **Why one-shots struggle:** Discovered constraints are typically lost after completion; there is no built-in accumulation loop.
+- **Why kennings fit naturally:** Reflections capture what was missing, then the kenning evolves. Preparation quality compounds across sessions.
+
+In short: one-shot prompting can specify a target. Kennings can construct a path to that target.
+
+---
+
 ## Frame 7: The Collaboration Pattern
 
 This system emerged from a specific kind of collaboration:
@@ -166,6 +206,7 @@ Nothing is built yet. The tool exists only as design. The work ahead:
 3. Refine the kenning format through actual use
 4. Develop the improvement/evolution cycle
 5. Scale to complex multi-ken projects
+6. Add kenning search and selection (match task → right kenning contract)
 
 You are at the beginning.
 
@@ -193,6 +234,7 @@ You are at the beginning.
 │    kens/                 # ken definitions                       │
 │      {path}/                                                     │
 │        kenning.md        # the reconstruction sequence           │
+│        kenning_guide.md  # why this kenning is shaped this way   │
 │        interface.md      # what this ken exposes                 │
 │        meta.yaml         # parent, peers, version                │
 │    reflections/          # post-session reflections              │
@@ -238,6 +280,7 @@ ken test {path}                   # A/B test proposed vs current
   --agents {n}                    # Number of test agents
 ken promote {path}                # Promote tested improvement
 ken history {path}                # View kenning evolution
+ken search {query}                # Find candidate kennings by task/contract fit
 ```
 
 ### The Wake Cycle (Internal)
@@ -246,46 +289,201 @@ When `ken wake {path} --task "..."` executes:
 
 ```
 1. Load kenning.md for {path}
-2. Load meta.yaml (parent, peers, version info)
-3. Load interface.md for context
-4. Spawn AI agent (e.g., claude-code in chat mode)
-5. For each frame in kenning:
-   a. Send frame prompt to agent
+2. Read kenning contract (frame-of-reference, task-fit, success criteria, bind schema)
+3. Load meta.yaml (parent, peers, version info)
+4. Load interface.md for context
+5. Validate provided bind payload against kenning bind schema
+   - If invalid/missing required binds: reject wake with actionable error
+6. Resolve bind payload into frame inputs
+7. Spawn AI agent (e.g., claude-code in chat mode)
+8. For each frame in kenning:
+   a. Send resolved frame prompt to agent
    b. Capture agent response
    c. Response becomes part of context
-6. Send task prompt
-7. Agent works (has access to codebase, can create files, run tests)
-8. Work complete signal received
-9. Send reflection prompt
-10. Capture reflection, save to reflections/{path}/{timestamp}.md
-11. End agent session
-12. Return results to caller
+9. Send task prompt
+10. Agent works (has access to codebase, can create files, run tests)
+11. Work complete signal received
+12. Send reflection prompt
+13. Capture reflection, save to reflections/{path}/{timestamp}.md
+14. End agent session
+15. Return results to caller
 ```
 
-### Kenning Format
+### Kenning Contract and Binding Enforcement
+
+A kenning should declare a formal contract that `ken` enforces before wake begins.
+
+**Core rule:** if a kenning requires bindings and the caller does not provide valid bind data, `ken wake` must reject the wake request and return a structured error that explains exactly what is wrong, what is missing, and why each required bind is needed by this kenning.
+
+This keeps responsibilities clean:
+
+- **Orchestrator/caller:** selects the kenning and provides bind payloads that satisfy schema.
+- **ken runtime:** validates payloads and resolves bindings into frames.
+- **Awakened agent:** focuses only on interpretation, execution, and reflection.
+
+The agent may request extra context during work, but acceptance and binding remain orchestration/runtime decisions.
+
+### Operational Semantics (for implementers)
+
+To reduce ambiguity between design intent and runtime behavior:
+
+- A kenning **contract** is normative input to `ken wake`, not optional prose.
+- `bind_requirements.required: true` means wake cannot start without schema-valid bind payload.
+- Contract validation happens before agent spawn.
+- Validation failures are first-class outcomes (not exceptions), returned to caller with explicit remediation.
+- Validation errors include bind-purpose metadata authored in the kenning so callers understand what each missing field is used for.
+- Frame sequencing consumes only validated/resolved bindings plus prior frame outputs.
+
+This makes wake deterministic for orchestrators and predictable for awakened agents.
+
+### Deterministic Bind Error Derivation
+
+To make bind errors deterministic, the kenning contract must contain enough information to derive error messages mechanically (not by model inference).
+
+Required derivation inputs:
+- `bind_requirements.schema` (shape/required/type constraints)
+- `bind_requirements.field_docs` (purpose, used_by_frames, source guidance)
+- Stable field paths shared by both blocks (for example: `pr.diff`, `baseline.files`)
+
+Runtime derivation rule:
+- For every schema violation at path `P`, `ken` looks up `field_docs[P]` and attaches that metadata to the error.
+- If `field_docs[P]` is missing for a required schema field, contract validation fails before wake with `KEN_CONTRACT_INVALID`.
+
+This means bind errors are generated from deterministic table lookups plus schema validation output, not freeform reasoning.
+
+### Kenning Format (Contract + Frames)
 
 ```markdown
 # {Ken Name}
+
+## Contract
+frame_of_reference: |
+  {What lens this wake establishes and why}
+task_types:
+  - {task shape this kenning is designed for}
+  - {additional supported task shape}
+success_criteria:
+  - {observable outcome for a successful awakened agent}
+  - {quality/risk bar}
+
+bind_requirements:
+  required: true|false
+  schema:
+    type: object
+    required: [{fieldA}, {fieldB}]
+    properties:
+      {fieldA}:
+        type: string
+      {fieldB}:
+        type: array
+        items: {type: string}
+
+  field_docs:
+    {fieldA}:                    # MUST match exact schema field path
+      description: {what this field must contain}
+      purpose: {why this field matters for wake quality}
+      used_by_frames: ["Frame 2", "Frame 4"]
+      source_guidance: {where caller should gather this value}
+      quality_bar:
+        minimum: {lowest acceptable quality}
+        preferred: {best-quality version to target}
+      failure_modes:
+        - {common poor input and why it harms reasoning}
+      example_good: {high-quality example value}
+      example_bad: {low-quality example value}
+    {fieldB}:                    # MUST match exact schema field path
+      description: {what this field must contain}
+      purpose: {what reasoning this unlocks}
+      used_by_frames: ["Frame 3"]
+      source_guidance: {where caller should gather this value}
+      quality_bar:
+        minimum: {lowest acceptable quality}
+        preferred: {best-quality version to target}
+      failure_modes:
+        - {common poor input and why it harms reasoning}
+      example_good: {high-quality example value}
+      example_bad: {low-quality example value}
 
 ## Meta
 parent: {path or null}
 peers: [{path}, {path}, ...]
 version: {n}
 
-## Frame 1: {Title}
+## Frames
+### Frame 1: {Title}
 {Generative prompt — designed to make agent produce understanding}
 
-## Frame 2: {Title}
+### Frame 2: {Title}
 {Builds on Frame 1...}
-
-## Frame 3: {Title}
-{Builds on Frame 2...}
 
 ...
 
-## Frame N: Grounding
+### Frame N: Grounding
 {Final frame: what exists, what's the current state, what's the task context}
 ```
+
+### Field Docs Quality Standard (High-Leverage Binding Inputs)
+
+`field_docs` is not lightweight annotation. It is the quality-control surface for bind payloads.
+
+If callers provide low-quality bind data, wake quality degrades even when schema validation passes. Therefore each required field doc should be rich enough to guide callers toward the *best available* input, not merely a type-correct input.
+
+Minimum richness per required bind field:
+- `description`: what the field contains (precise scope and boundaries)
+- `purpose`: why the field exists and what reasoning it unlocks
+- `used_by_frames`: exactly where in the sequence it is consumed
+- `source_guidance`: preferred upstream sources and extraction method
+- `quality_bar`: criteria for "good enough" vs "high quality"
+- `failure_modes`: common bad inputs and why they harm wake
+- `example_good` / `example_bad`: concrete contrast examples
+
+Design intent: schema enforces structural validity; `field_docs` enforces semantic usefulness.
+
+### Kenning Modification Guide (kenning_guide.md)
+
+Each ken should maintain a `kenning_guide.md` as accumulated design memory for that kenning.
+
+Purpose:
+- Preserve *why* key wording, sequence, and constraints exist.
+- Record what changed, why it changed, and what regressions it prevented.
+- Prevent future improvement cycles from accidentally reverting important gains.
+
+Minimum required sections:
+
+```markdown
+# Kenning Modification Guide: {ken-path}
+
+## Invariants (Do Not Change Lightly)
+- {ordering dependency and why it matters}
+- {critical wording choice and intended effect}
+
+## Change Log
+### {date} — {change summary}
+- What changed:
+- Why:
+- Evidence (reflection IDs / trial IDs):
+- Risk of reverting:
+
+## Ordering Dependencies
+- Frame A must precede Frame B because:
+- Frame C must remain after bind validation because:
+
+## Wording Rationale
+- Phrase: "..."
+  - Why this wording:
+  - Failure mode if simplified:
+
+## Known Anti-Patterns
+- {change that looked cleaner but reduced wake quality}
+
+## Safe Edit Checklist
+- Did this modify an invariant?
+- If ordering changed, did we run comparative trial?
+- Did we update contract field docs and error semantics?
+- Did we append rationale to this guide?
+```
+
+Improvement workflow rule: every accepted `ken improve` change should update both `kenning.md` and `kenning_guide.md` together.
 
 ### Reflection Format
 

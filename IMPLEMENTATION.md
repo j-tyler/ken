@@ -265,20 +265,155 @@ Process:
 
 ### `ken wake {path} --task "..."`
 
+**Bind schema validation (required):**
+- Parse kenning contract metadata before frame execution.
+- If `bind_requirements.required: true`, validate caller payload against the declared schema.
+- On validation failure, reject wake with explicit missing/invalid field diagnostics.
+- Only after validation succeeds should runtime resolve bound data into grounding frames.
+
+### Deterministic Validation Pipeline (Inference Cycle)
+
+The bind error payload must be produced by a deterministic pipeline with no LLM step.
+
+```text
+Input: kenning contract + caller bind payload
+Output: either ValidatedBind or KEN_BIND_VALIDATION_FAILED
+
+Phase A: Contract compile
+1. Parse `bind_requirements.schema` into validator IR.
+2. Parse `bind_requirements.field_docs` into metadata map keyed by field path.
+3. Verify every required schema path has a matching field_docs entry.
+4. If mismatch exists, return `KEN_CONTRACT_INVALID` (cannot safely validate binds).
+
+Phase B: Payload validate
+5. Run schema validator on bind payload.
+6. Collect violations as normalized tuples:
+   - {path, violation_type, expected, received_summary}
+
+Phase C: Error materialize
+7. For each violation tuple at path P:
+   - Lookup metadata_map[P]
+   - Attach: description, purpose, used_by_frames, source_guidance, quality_bar, failure_modes
+8. Emit stable, sorted error arrays by field path.
+9. Return machine-readable error payload.
+```
+
+Determinism requirements:
+- Sort violations lexicographically by `path`.
+- Use fixed `violation_type` enums (missing_required, type_mismatch, format_mismatch, additional_property, null_not_allowed).
+- Redact values via deterministic redaction policy before output.
+
+### Bind Input Quality Evaluation (Beyond Schema Validity)
+
+After schema validation passes, `ken` should evaluate bind *quality* using `field_docs` quality metadata.
+
+Goal: help caller improve weak-but-valid inputs before wake proceeds.
+
+Recommended behavior:
+- Compute per-field quality status: `high`, `acceptable`, or `weak`.
+- If status is `weak`, return non-fatal warnings in dry-run and optional preflight mode.
+- Explain warnings using `quality_bar`, `failure_modes`, and `example_good/example_bad` from `field_docs`.
+
+This keeps deterministic validation strict while still steering callers toward best-quality bindings.
+
+### Wake Validation: Normative Runtime Requirements
+
+These are MUST/SHOULD rules for implementation consistency.
+
+**MUST**
+- Reject wake before spawning the agent if required bind payload is missing or invalid.
+- Use a single validator engine and normalized violation model so equivalent input always yields equivalent error output.
+- Return machine-readable validation errors (field path, expected type/constraint, received value summary, and per-field usage/purpose from kenning metadata).
+- Include human-actionable remediation text (what to provide next).
+- If bind object is entirely absent, return a dedicated error branch that surfaces required fields plus their purpose and source guidance.
+- Fail with `KEN_CONTRACT_INVALID` when schema/field_docs mappings are incomplete.
+- Require rich field_docs metadata for required fields (including quality and failure guidance), not only minimal descriptions.
+- Record a structured wake-attempt event for failed and successful validation.
+
+**SHOULD**
+- Support `--bind-file` and `--bind-json` input modes.
+- Support quality preflight warnings for weak-but-valid bind payloads.
+- Support a `ken wake --dry-run` mode that validates binds and renders resolved frame inputs without spawning an agent.
+- Redact sensitive bind values in logs while preserving field-level diagnostics.
+
+**MUST NOT**
+- Auto-fill missing required bind fields from ambient context.
+- Continue to frame execution after validation failure.
+
+### Example Validation Error Contract
+
+```json
+{
+  "code": "KEN_BIND_VALIDATION_FAILED",
+  "ken_path": "review/pr",
+  "validator_version": "jsonschema-draft2020-12@1",
+  "bind_object_present": false,
+  "violations": [
+    {
+      "path": "baseline.files",
+      "violation_type": "missing_required",
+      "expected": "array<string>",
+      "received_summary": "missing",
+      "field_doc": {
+        "description": "Baseline file paths representing pre-PR system design.",
+        "purpose": "Used in Frame 2 to reconstruct pre-change frame of reference.",
+        "used_by_frames": ["Frame 2"],
+        "source_guidance": "List canonical baseline files before applying the diff."
+      }
+    },
+    {
+      "path": "pr.diff",
+      "violation_type": "missing_required",
+      "expected": "string",
+      "received_summary": "missing",
+      "field_doc": {
+        "description": "Unified diff for the PR being reviewed.",
+        "purpose": "Used in Frame 3 to evaluate code changes against baseline behavior.",
+        "used_by_frames": ["Frame 3"],
+        "source_guidance": "Provide full unified git diff for target PR."
+      }
+    }
+  ],
+  "remediation": {
+    "next_step": "Resubmit `ken wake` with bind payload satisfying required fields.",
+    "docs_ref": "kens/review/pr/kenning.md#contract-bind_requirements",
+    "contract_ref": "kens/review/pr/kenning.md#contract-bind_requirements-field_docs"
+  }
+}
+```
+
+### Kenning Authoring Requirement for Bind Metadata
+
+Every required bind field in a kenning contract should include:
+- `description` (what value to provide)
+- `purpose` (why this value matters)
+- `used_by_frames` (where it is consumed in wake sequence)
+- `source_guidance` (how caller should gather it)
+- `quality_bar` (minimum acceptable vs preferred best-quality value)
+- `failure_modes` (what weak inputs look like and why they fail semantically)
+- `example_good` / `example_bad` (caller calibration)
+
+Without this metadata, validation errors cannot teach orchestrators how to recover correctly.
+
+Canonicalization:
+- Before validation, normalize bind payload keys/paths exactly as contract expects.
+- After validation, sort violations by path to keep outputs stable for the same input.
+
 This is the core command. Detailed flow:
 
 ```
 1. Load project config (ken.yaml)
 2. Load ken metadata (kens/{path}/meta.yaml)
 3. Parse kenning (kens/{path}/kenning.md)
-4. Load interface (kens/{path}/interface.md)
-5. Initialize session state
+4. Load kenning guide (kens/{path}/kenning_guide.md) for rationale-aware tooling
+5. Load interface (kens/{path}/interface.md)
+6. Initialize session state
 
-6. Start AI agent:
+7. Start AI agent:
    - Spawn claude-code process in chat mode
    - Establish communication channel (stdin/stdout)
 
-7. Walk through frames:
+8. Walk through frames:
    for each frame in kenning.frames:
      a. Prepare prompt:
         - Frame prompt text
@@ -288,19 +423,19 @@ This is the core command. Detailed flow:
      d. Store in session.frames_completed
      e. Update session status
 
-8. If --task provided:
+9. If --task provided:
    a. Send task prompt
    b. Agent enters working mode
    c. Agent can: read/write files, run commands, access codebase
    d. Wait for work completion signal
 
-9. Reflection phase:
+10. Reflection phase:
    a. Send reflection prompt
    b. Capture reflection response
    c. Parse into Reflection struct
    d. Save to reflections/{path}/{timestamp}.md
 
-10. End session:
+11. End session:
     a. Update ken metadata (session count, last session)
     b. Close agent process
     c. Return results
@@ -536,6 +671,49 @@ ken reflect
 - `ken new` (not `create`) — more natural phrasing
 - `ken reflect` ends the session — no separate `sleep` command
 - Navigation is `ken context [up|down|peers]` (Phase 2)
+- Add `ken search {query}` for task-to-kenning discovery using contract metadata (future phase)
+
+---
+
+### Kenning Search (`ken search`) - Ranking and Selection
+
+`ken search` should rank candidate kennings using contract metadata, not filename heuristics.
+
+Minimum scoring inputs:
+- Task intent similarity against `task_types`
+- Required bind satisfiability (can caller provide required fields?)
+- Declared success criteria fit (output expectations vs requested outcome)
+- Optional historical effectiveness signals (later phase)
+
+Recommended CLI output fields:
+- `ken_path`
+- `score`
+- `matched_task_type`
+- `required_binds`
+- `missing_binds`
+- `why_this_match` (one-line rationale)
+
+Selection guardrail: top result should not be auto-executed without exposing required binds and mismatch warnings.
+
+---
+
+### Kenning Guide Enforcement in Improve/Promote Flow
+
+When a kenning revision is proposed or promoted:
+
+**MUST**
+- Require a paired update to `kenning_guide.md` explaining the change rationale.
+- Record ordering-sensitive edits explicitly (what moved, why, expected impact).
+- Record wording-sensitive edits explicitly (exact old/new phrasing and rationale).
+- Link evidence IDs (reflection files, trial runs) that motivated the change.
+
+**SHOULD**
+- Block promotion if guide update is missing for non-trivial frame edits.
+- Produce a concise "revert risk" note to prevent future accidental rollbacks.
+
+Suggested CLI behavior:
+- `ken improve` emits a proposed `kenning_guide.md` patch alongside `kenning.md` patch.
+- `ken promote` validates both patches are present before accepting.
 
 ---
 
