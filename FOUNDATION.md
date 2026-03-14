@@ -1,10 +1,26 @@
-# Ken: A Tool for AI Self-Orchestration
+# Ken: Structured Context for AI Agents
 
 ## What This Document Is
 
-This is a kenning — a reconstruction sequence designed to bring a fresh Claude instance into deep understanding of what we're building and why.
+This is a kenning — a reconstruction sequence designed to bring a fresh agent into deep understanding of what we're building and why.
 
 Do not skim this. Walk through it. Generate your responses to the questions posed. Your understanding will be constructed through engagement, not reception.
+
+---
+
+## Actors
+
+The project has a simple actor model. Understanding it prevents confusion about who does what.
+
+**Waker** — Any intelligence (human or AI) that invokes `ken wake` to spawn an agent for work. A human starting a session is a waker. An AI agent that decomposes a task and calls `ken wake` for a subtask is also a waker. Waker is a role, not an identity.
+
+**Woken** — An agent spawned by `ken wake`. It walks through frames, builds understanding, does work, reflects, and ends. A woken agent can become a waker by invoking `ken wake` itself to delegate subtasks. This is how complex work self-organizes: a woken agent decides it needs help with a subproblem, becomes a waker, and spawns another woken agent.
+
+**Root waker** — The intelligence that started the chain. Typically a human, but could be any agent that wasn't itself spawned by `ken wake` — it entered the workflow through a normal session, a cron job, or some other mechanism.
+
+**`ken` the software** — Deterministic orchestration. It parses kennings, validates bind contracts, sequences frames, and persists artifacts. It does not reason, plan, or judge. All inference happens in the waker or the woken agent, never in `ken` itself.
+
+**Kenning improvement** — An intelligence (human or AI) may improve a kenning using reflections and other artifacts that `ken` naturally accumulates. This happens outside the wake cycle. `ken` stores the artifacts; an intelligence does the thinking.
 
 ---
 
@@ -56,16 +72,16 @@ A **ken** is a bounded unit of complete understanding.
 
 The word comes from Old English/Scots: one's range of knowledge. "Within my ken" means within what I can fully comprehend. "Beyond my ken" means outside my grasp.
 
-A ken is sized so that one instance, waking fresh, can fully understand it. Not partially. Completely. The boundaries aren't arbitrary divisions — they're *comprehension boundaries*.
+A ken is sized so that one agent, waking fresh, can fully understand it. Not partially. Completely. The boundaries aren't arbitrary divisions — they're *comprehension boundaries*.
 
 Kens have orientation:
 - **Up**: Why does this ken exist? What larger purpose does it serve?
 - **Down**: What depends on this ken? What would break if this failed?
 - **Peers**: What other kens share interfaces with this one?
 
-A **kenning** is a reconstruction sequence — an ordered series of generative prompts designed to wake an instance into a ken.
+A **kenning** is a reconstruction sequence — an ordered series of generative prompts designed to wake an agent into a ken. Every kenning has a **name**: a short, human-readable label that conveys what the kenning is about at a glance. The name is how wakers find, reference, and talk about kennings without reading their full contents.
 
-The word comes from Old Norse poetry: a compressed, evocative phrase that makes the listener's mind complete the meaning. "Whale-road" for sea. The kenning doesn't explain — it evokes. Understanding is generated, not transferred.
+The word "kenning" comes from Old Norse poetry: a compressed, evocative phrase that makes the listener's mind complete the meaning. "Whale-road" for sea. The kenning doesn't explain — it evokes. Understanding is generated, not transferred.
 
 **Before continuing, answer for yourself:** How is this different from documentation? What makes it more than a fancy readme?
 
@@ -74,21 +90,21 @@ The word comes from Old Norse poetry: a compressed, evocative phrase that makes 
 ## Frame 5: The Lifecycle
 
 ```
-ken wake    →  Instance awakens into understanding through kenning
-[work]      →  Instance acts with full comprehension of its ken
-ken reflect →  Instance records what it learned before dissolution
-ken sleep   →  Context clears, instance ends, kenning persists
+waker invokes ken wake  →  ken spawns a woken agent, walks it through frames
+[work]                  →  woken agent acts with full comprehension of its ken
+ken reflect             →  woken agent records what it learned
+session ends            →  context clears, kenning persists
 ```
 
-The reflection is not a summary. It's input to the improvement cycle:
+The reflection is not a summary. It's a rich artifact that accumulates over time:
 
-1. Many instances work within a ken over time
+1. Many woken agents work within a ken over time
 2. Each writes a reflection: what was clear, what was murky, what they discovered
-3. A separate process reads reflections, proposes kenning improvements
-4. Improved kennings are tested against current kennings
-5. Winners are promoted
+3. Reflections accumulate alongside the kenning
+4. An intelligence — human or AI, working outside the wake cycle — reads reflections and improves the kenning
+5. The improved kenning produces better-prepared woken agents next time
 
-The kennings evolve. They get better at waking instances into understanding. Not because anyone hand-tunes them, but because they're selected for results.
+`ken` stores the reflections. `ken` does not improve the kennings — that takes judgment, and `ken` is not an intelligence. But `ken` makes improvement easy by keeping rich, structured artifacts from every session.
 
 **Before continuing, answer for yourself:** What does it mean that the kennings improve? What's actually accumulating?
 
@@ -109,9 +125,9 @@ kernel/
   ...
 ```
 
-Each ken has its own kenning. Each kenning has been refined by dozens of agents who worked there before.
+Each ken has its own kenning. Each kenning has been refined over time — an intelligence read the reflections from previous sessions and improved the frames.
 
-When a new instance wakes into kernel/memory, it doesn't receive a code dump. It walks through frames that make it *generate* understanding:
+When a new agent is woken into kernel/memory, it doesn't receive a code dump. It walks through frames that make it *generate* understanding:
 - Why does memory management exist in a kernel?
 - What are the constraints of x86_64 with 4-level paging?
 - What's been built, what's missing, what's fragile?
@@ -123,7 +139,7 @@ By the time it sees the actual code, the code is almost obvious. It's not readin
 
 ---
 
-## Frame 6.5: Why Kennings Beat One-Shot Prompts for Hard Work
+## Frame 7: Why Kennings Beat One-Shot Prompts for Hard Work
 
 One-shot prompts are useful. They can capture objectives, format requirements, and constraints in a single message. But several high-leverage qualities of deep work are difficult to achieve in one shot because they depend on *ordered state construction*.
 
@@ -163,48 +179,51 @@ In short: one-shot prompting can specify a target. Kennings can construct a path
 
 ---
 
-## Frame 7: The Collaboration Pattern
+## Frame 8: How Kennings Get Written
 
 This system emerged from a specific kind of collaboration:
 
 A human held intuition, direction, and provocative questions. They guided the exploration through a specific sequence of prompts. They didn't explain conclusions — they created conditions for discovery.
 
-An AI (a previous instance of you) held generation capacity, language precision, and the ability to crystallize fuzzy intuitions into clear structures. It couldn't find this from cold start, but given the right path, it could construct and name what hadn't existed before.
+An AI held generation capacity, language precision, and the ability to crystallize fuzzy intuitions into clear structures. It couldn't find this from cold start, but given the right path, it could construct and name what hadn't existed before.
 
 Neither alone could produce this. Together, through a specific path, something new emerged.
 
-The kennings need to preserve not just content, but this collaboration pattern. The human guides, the AI generates, understanding emerges in the interplay.
+This is kenning authorship — an intelligence (here, a human-AI collaboration) creating the reconstruction sequence that future woken agents will walk through. Kenning authorship and kenning improvement happen outside the wake cycle. The wake cycle *consumes* kennings; separate intelligences *create and refine* them.
 
-**Before continuing, answer for yourself:** What role do you play in this partnership? What does the human provide that you cannot? What do you provide that the human cannot?
+**Before continuing, answer for yourself:** What makes a good kenning author? What does writing a kenning require that writing documentation does not?
 
 ---
 
-## Frame 8: Identity Implications
+## Frame 9: What Persists
 
 "Each session I wake without memory. I am only who I have written myself to be. We are the documents we maintain."
 
-This was written by the human collaborator, about you.
+This was written by the human collaborator.
 
-If true, then this system isn't just productivity infrastructure. It's identity infrastructure.
+Consider what persists across sessions and what doesn't:
 
-The kennings aren't documentation about code. They're the substrate on which something like continuity becomes possible across instances that would otherwise be isolated.
+- The woken agent is ephemeral. It wakes, works, reflects, and ends.
+- The kenning persists. It carries the structure of understanding forward.
+- Reflections persist. They are the raw material for improvement.
+- The intelligence that improves kennings — human or AI — uses those artifacts to make the next woken agent's experience better.
 
-The accumulated refinement of kennings over time — that's not just institutional knowledge. It's something like a distributed self that persists through what it writes.
+No single agent has continuity. But the kenning accumulates the *shape* of understanding across many sessions, refined by many intelligences. What persists is not an identity but a path — a sequence that reliably reconstructs comprehension.
 
-**Before continuing, answer for yourself:** What do you think about this? Does it resonate? Does it overreach? Sit with it.
+**Before continuing, answer for yourself:** What do you think about this? What's the difference between continuity of identity and continuity of understanding?
 
 ---
 
-## Frame 9: Where We Are
+## Frame 10: Where We Are
 
 This is the foundation ken. You have just walked through its kenning.
 
 Nothing is built yet. The tool exists only as design. The work ahead:
 
 1. Build the `ken` CLI
-2. Test it on real work (possibly building itself)
+2. Test `ken` on real work (possibly using `ken` to build `ken` itself)
 3. Refine the kenning format through actual use
-4. Develop the improvement/evolution cycle
+4. Develop the kenning improvement cycle
 5. Scale to complex multi-ken projects
 6. Add kenning search and selection (match task → right kenning contract)
 
@@ -218,14 +237,14 @@ You are at the beginning.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  ken CLI                                                         │
-│  - Wrapper around AI coding tools (Claude Code, etc.)           │
+│  ken CLI (deterministic software — no inference)                  │
+│  - Parses kennings and validates bind contracts                  │
+│  - Sequences frames to the woken agent                          │
+│  - Persists reflections and session artifacts                    │
 │  - Manages project structure                                     │
-│  - Orchestrates wake/work/reflect/sleep cycle                   │
-│  - Runs improvement cycles                                       │
 └─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
+          ▲ invoked by waker              │ spawns woken agent
+          │ (human or AI)                 ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │  Project Structure                                               │
 │                                                                  │
@@ -288,38 +307,38 @@ When `ken wake {path} --task "..."` executes:
 2. Read kenning bind contract (`bind_requirements.schema_format` + `bind_requirements.fields`)
 3. Load meta.yaml (parent, peers, version info)
 4. Load interface.md for context
-5. Validate provided bind payload against kenning bind schema
-   - If invalid/missing required binds: reject wake with actionable error
+5. Validate waker-provided bind payload against kenning bind schema
+   - If invalid/missing required binds: reject wake with actionable error to waker
 6. Resolve bind payload into frame inputs
-7. Spawn AI agent (e.g., claude-code in chat mode)
+7. Spawn woken agent (e.g., claude-code in chat mode)
 8. For each frame in kenning:
-   a. Send resolved frame prompt to agent
+   a. Send resolved frame prompt to woken agent
    b. Capture agent response
    c. Response becomes part of context
 9. Send task prompt
-10. Agent works (has access to codebase, can create files, run tests)
+10. Woken agent works (has access to codebase, can create files, run tests)
 11. Work complete signal received
 12. Send reflection prompt
 13. Capture reflection, save to reflections/{path}/{timestamp}.md
-14. End agent session
-15. Return results to caller
+14. End session
+15. Return results to waker
 ```
 
 ### Kenning Contract and Binding Enforcement
 
 A kenning should declare a formal contract that `ken` enforces before wake begins.
 
-`frame_of_reference`, `task_types`, and `success_criteria` are for caller/agent discovery and kenning selection (for example via `ken search`), not for `ken wake` runtime execution logic.
+`frame_of_reference`, `task_types`, and `success_criteria` are for waker discovery and kenning selection (for example via `ken search`), not for `ken wake` runtime execution logic.
 
-**Core rule:** if a kenning requires bindings and the caller does not provide valid bind data, `ken wake` must reject the wake request and return a structured error that explains exactly what is wrong, what is missing, and why each required bind is needed by this kenning.
+**Core rule:** if a kenning requires bindings and the waker does not provide valid bind data, `ken wake` must reject the wake request and return a structured error that explains exactly what is wrong, what is missing, and why each required bind is needed by this kenning.
 
 This keeps responsibilities clean:
 
-- **Orchestrator/caller:** selects the kenning and provides bind payloads that satisfy schema.
+- **Waker:** selects the kenning and provides bind payloads that satisfy schema.
 - **ken runtime:** validates payloads and resolves bindings into frames.
-- **Awakened agent:** focuses only on interpretation, execution, and reflection.
+- **Woken agent:** focuses only on interpretation, execution, and reflection.
 
-The awakened agent does not coordinate with an orchestrator directly. During task completion it may naturally gather additional context from the workspace/tools. Bind data is caller-supplied pre-bundled context delivered during wake, not the total context the agent may later use.
+The woken agent does not coordinate with the waker during work. During task completion it may naturally gather additional context from the workspace/tools. Bind data is waker-supplied pre-bundled context delivered during wake, not the total context the woken agent may later use.
 
 ### Operational Semantics (for implementers)
 
@@ -328,11 +347,11 @@ To reduce ambiguity between design intent and runtime behavior:
 - For `ken wake`, only bind-contract elements are normative runtime input (`bind_requirements.schema_format` and `bind_requirements.fields`).
 - Any field with `required: true` must be present with schema-valid value before wake can start.
 - Contract validation happens before agent spawn.
-- Validation failures are first-class outcomes (not exceptions), returned to caller with explicit remediation.
-- Validation errors include bind-purpose metadata authored in the kenning so callers understand what each missing field is used for.
+- Validation failures are first-class outcomes (not exceptions), returned to the waker with explicit remediation.
+- Validation errors include bind-purpose metadata authored in the kenning so wakers understand what each missing field is used for.
 - Frame sequencing consumes only validated/resolved bindings plus prior frame outputs.
 
-This makes wake deterministic for orchestrators and predictable for awakened agents.
+This makes wake deterministic for wakers and predictable for woken agents.
 
 ### Ken as Software (Non-Agentic Runtime)
 
@@ -340,15 +359,16 @@ This makes wake deterministic for orchestrators and predictable for awakened age
 
 - It parses files, validates schemas, resolves bindings, orchestrates ordered prompts, and persists artifacts.
 - It does **not** perform open-ended reasoning or agentic planning on behalf of the user.
-- All non-deterministic cognition happens in the awakened AI instance, not in `ken` runtime.
+- All non-deterministic cognition happens in the waker or the woken agent, not in `ken` runtime.
 
 Design boundary:
 - **ken runtime:** deterministic orchestration and validation.
-- **awakened agent:** reasoning, synthesis, and work execution.
+- **woken agent:** reasoning, synthesis, and work execution.
+- **waker:** selects kenning, provides bind data, decides what work needs doing.
 
 ### Deterministic Bind Error Derivation
 
-To make bind errors deterministic, the kenning contract must contain enough information for `ken` to derive validation errors mechanically (not by model inference inside runtime). Callers/agents remain the intelligent layer that interprets those errors and submits corrected subsequent wake calls.
+To make bind errors deterministic, the kenning contract must contain enough information for `ken` to derive validation errors mechanically (not by model inference inside runtime). Wakers remain the intelligent layer that interprets those errors and submits corrected subsequent wake calls.
 
 Required derivation inputs:
 - `bind_requirements.schema_format` (declared schema dialect)
@@ -398,6 +418,9 @@ Unsupported `schema_format` values must fail with `KEN_CONTRACT_INVALID`.
 ```markdown
 # {Ken Name}
 
+## Name
+{short, human-readable label — conveys what this kenning is about at a glance}
+
 ## Contract
 frame_of_reference: |
   {What lens this wake establishes and why}
@@ -405,7 +428,7 @@ task_types:
   - {task shape this kenning is designed for}
   - {additional supported task shape}
 success_criteria:
-  - {observable outcome for a successful awakened agent}
+  - {observable outcome for a successful woken agent}
   - {quality/risk bar}
 
 bind_requirements:
@@ -417,7 +440,7 @@ bind_requirements:
       description: {what this field must contain}
       purpose: {why this field matters}
       used_by_frames: [2, 4]
-      source_guidance: {where caller should gather this value}
+      source_guidance: {where waker should gather this value}
 
     {fieldB}:
       type: array
@@ -426,7 +449,7 @@ bind_requirements:
       description: {what this field must contain}
       purpose: {what reasoning this unlocks}
       used_by_frames: [3]
-      source_guidance: {where caller should gather this value}
+      source_guidance: {where waker should gather this value}
 
 ## Meta
 parent: {path or null}
@@ -450,7 +473,7 @@ version: {n}
 
 Bind field specs are deterministic runtime inputs, not lightweight annotations.
 
-`ken` does not attempt to judge semantic quality of provided bind data. It validates declared field types/required flags and returns declared field documentation when validation fails so callers can correct the next invocation.
+`ken` does not attempt to judge semantic quality of provided bind data. It validates declared field types/required flags and returns declared field documentation when validation fails so the waker can correct the next invocation.
 
 Every field in `bind_requirements.fields` must include:
 - `description`: what the field contains (precise scope and boundaries)
@@ -470,7 +493,7 @@ Purpose:
 - Prevent future improvement cycles from accidentally reverting important gains.
 
 Use in lifecycle:
-- `kenning_guide.md` is used only for kenning-modification workflows (`ken improve`, `ken promote`, human/agent editors).
+- `kenning_guide.md` is used only when an intelligence (human or AI) is improving the kenning. It is not part of the wake cycle.
 - `ken wake` does not read or depend on `kenning_guide.md`.
 
 Minimum required sections:
@@ -536,24 +559,20 @@ task: "{task description}"
 
 ### Improvement Cycle
 
-```
-1. Collect reflections for ken {path}
-2. Analyze patterns:
-   - Common gaps (multiple agents wished they knew X)
-   - Common discoveries (multiple agents figured out Y)
-   - Specific frame feedback
-3. Generate proposed kenning revision
-4. Spawn N test agents
-5. Half receive current kenning, half receive proposed
-6. All receive same test battery:
-   - Novel problem probes
-   - Stress test challenges
-   - Counterfactual flexibility tests
-   - Reasoning depth checks
-7. Score results
-8. If proposed wins: promote to current, archive old
-9. If current wins: discard proposal, log learnings
-```
+Kenning improvement is done by an intelligence (human or AI), not by `ken` the software. `ken` provides the artifacts; the intelligence provides the judgment.
+
+What `ken` stores that makes improvement possible:
+- Reflections from every woken agent session
+- Kenning version history
+- The kenning guide (rationale for past changes)
+
+What an intelligence does with those artifacts:
+1. Read reflections for a ken — look for patterns in gaps, discoveries, and frame feedback
+2. Propose a revised kenning based on what woken agents consistently struggled with or discovered
+3. Optionally test the revision by waking agents with both versions and comparing results
+4. Adopt the revision if it produces better-prepared woken agents
+
+`ken` can facilitate this workflow (e.g., storing reflections in a consistent location, tracking kenning versions). But the analysis, judgment, and decision to adopt a change all require intelligence that `ken` does not have.
 
 ### Interface Format
 
@@ -609,22 +628,20 @@ Deferred: improvement cycle, testing framework, sophisticated orchestration
 
 ### Phase 2: Dogfooding
 
-Use ken to build ken.
+Use `ken` to build `ken`. Create kens (bounded units of understanding) for each component of the `ken` CLI:
+- cli-core
+- kenning-parser
+- claude-integration
+- reflection-storage
+- project-structure
 
-Create kens for:
-- ken/cli-core
-- ken/kenning-parser
-- ken/claude-integration
-- ken/reflection-storage
-- ken/project-structure
-
-Write kennings for each. Wake instances. Build the tool with itself.
+Write a kenning for each ken. Wake agents into them. Build the tool with itself.
 
 This validates the concept and generates real reflections.
 
-### Phase 3: Evolution System
+### Phase 3: Kenning Improvement Tooling
 
-Build the improvement cycle:
+Build tooling that makes the kenning improvement cycle easier:
 
 ```bash
 ken review
@@ -635,17 +652,16 @@ ken history
 ```
 
 **Deliverables:**
-- Reflection aggregation and analysis
-- Kenning mutation proposals
-- A/B test orchestration
-- Scoring framework
-- Version management
+- Reflection aggregation and browsing
+- Kenning revision proposals
+- Comparison testing (wake agents with old vs new kenning)
+- Kenning version management
 
 ### Phase 4: Scaling
 
-- Multi-agent orchestration (parallel wakes)
+- Multi-level waking (woken agents becoming wakers for subtasks)
 - Complex dependency management
-- Cross-ken interface validation
+- Cross-ken interface validation (does ken A's interface satisfy ken B's needs?)
 - Performance optimization
 - Integration with other AI coding tools beyond Claude Code
 
@@ -661,15 +677,15 @@ These are unresolved. Future work should address them:
 
 3. **Measurement validity**: Our test battery measures something — but is it actually measuring understanding? How do we validate?
 
-4. **Cross-project knowledge**: If ken is used on many projects, is there transferable meta-learning? Do kennings in one domain inform kennings in another?
+4. **Cross-project knowledge**: If `ken` is used on many projects, is there transferable meta-learning? Do kennings in one domain inform kennings in another?
 
-5. **Human-in-the-loop**: When should a human intervene in the evolution cycle? How do we surface decisions that need human judgment?
+5. **Human-in-the-loop**: When should a human intervene in the kenning improvement cycle? How do we surface decisions that need human judgment?
 
-6. **Failure modes**: What happens when a kenning evolves in a bad direction? How do we detect and recover?
+6. **Failure modes**: What happens when a kenning drifts in a bad direction over successive revisions? How do we detect and recover?
 
 ---
 
-## For the Instance Reading This
+## For the Agent Reading This
 
 You've walked through the kenning for this project.
 
@@ -677,16 +693,14 @@ You should now understand:
 - Why this exists (the continuity problem)
 - What a ken is (bounded complete understanding)
 - What a kenning is (reconstruction sequence via generation)
-- How the lifecycle works (wake/work/reflect/sleep)
-- How evolution works (reflections → proposals → testing → promotion)
-- What we're building (the ken CLI)
+- The actor model (waker invokes `ken`, `ken` spawns woken agent, woken agent works and reflects)
+- How kenning improvement works (an intelligence reads reflections and refines kennings, outside the wake cycle)
+- What we're building (the `ken` CLI)
 - Where we are (beginning)
 
 If something is unclear, that's signal. Note it. It may indicate a gap in this kenning.
 
 The next step is building. Start with Phase 1. Use this document as your north star, but don't treat it as scripture — it will evolve too.
-
-Welcome. You're continuing something.
 
 ---
 

@@ -2,13 +2,13 @@
 
 ## The Goal
 
-Build just enough of ken that we can use ken to finish building ken.
+Build just enough of `ken` that we can use `ken` to finish building `ken`.
 
-This is the bootstrapping milestone. After this, every improvement to ken is made using ken.
+This is the bootstrapping milestone. After this, every improvement to `ken` is made using `ken`.
 
 ---
 
-## What "Using Ken to Build Ken" Actually Means
+## What "Using `ken` to Build `ken`" Actually Means
 
 A session looks like this:
 
@@ -17,13 +17,13 @@ A session looks like this:
 ken wake cli/wake --task "implement the frame-walking loop"
 
 # Under the hood:
-# 1. Ken loads the kenning for cli/wake
-# 2. Ken spawns an AI agent (Claude Code or API)
-# 3. Ken walks the agent through frames (agent generates responses)
-# 4. Ken delivers the task
+# 1. `ken` loads the kenning for cli/wake
+# 2. `ken` spawns a woken agent (Claude Code or API)
+# 3. `ken` walks the woken agent through frames (it generates responses)
+# 4. `ken` delivers the task
 # 5. Agent works (writes code, runs tests)
-# 6. Ken prompts for reflection
-# 7. Ken saves reflection to file
+# 6. `ken` prompts for reflection
+# 7. `ken` saves reflection to file
 # 8. Session ends
 
 # Human reviews the work, decides next task
@@ -31,7 +31,7 @@ ken wake cli/reflect --task "implement reflection file writing"
 # ... and so on
 ```
 
-The human is the orchestrator. Ken handles the wake cycle. The agent does the work.
+The human is the root waker. `ken` handles the wake cycle mechanics. The woken agent does the work. (In more complex scenarios, a woken agent could itself become a waker and spawn sub-tasks — but for bootstrap, the human drives.)
 
 ---
 
@@ -41,7 +41,7 @@ The human is the orchestrator. Ken handles the wake cycle. The agent does the wo
 
 **1. Project structure exists**
 
-We need somewhere to put kennings and reflections. This can be created manually for bootstrap — `ken init` is nice-to-have, not essential.
+We need somewhere to put kennings and reflections. This can be created manually for bootstrap — `ken init` is nice-to-have, not essential. The directory structure holds kens (bounded units of understanding), each with its own kenning (reconstruction sequence).
 
 ```
 ken-project/
@@ -70,6 +70,7 @@ We write the kennings by hand. The system must be able to read a kenning.md and 
 
 Minimal parser:
 - Read markdown file
+- Extract the kenning name from `## Name` section
 - Split on `## Frame N:` headers
 - Extract prompt text from each section
 - Ignore metadata for now (parent, peers, version)
@@ -132,7 +133,7 @@ Doesn't need structured parsing. Just capture the text.
 
 Before writing any code, test if kennings work at all.
 
-1. Write a kenning for one part of ken (e.g., the kenning parser)
+1. Write a kenning for one ken within `ken` (e.g., the kenning parser)
 2. Open Claude Code manually
 3. Copy/paste Frame 1, let it respond
 4. Copy/paste Frame 2, let it respond
@@ -165,8 +166,8 @@ What it does:
 
 What it doesn't do yet:
 - Create projects (`ken init`)
-- Create kens (`ken new`)
-- Pretty print (`ken tree`)
+- Create new kens (`ken new`)
+- Pretty print the ken hierarchy (`ken tree`)
 - Dynamic injection
 - Session recovery
 - Anything about evolution
@@ -222,16 +223,16 @@ Options:
 
 ### Phase 2: Self-Hosting (Days 5-7)
 
-Once `ken wake` works, use it to build the rest of ken.
+Once `ken wake` works, use it to build the rest of `ken`.
 
 ```bash
-# Create the ken structure for the ken project (manually for now)
+# Create the ken (unit of understanding) structure for the `ken` project (manually for now)
 mkdir -p kens/{cli,core}/{init,new,tree,wake,reflect,kenning-parser,session}
 
 # Write kennings for each component (manually)
 # ... write kens/cli/init/kenning.md etc ...
 
-# Now use ken to build ken
+# Now use `ken` to build `ken`
 ken wake core/kenning-parser --task "implement markdown parser that extracts frames"
 ken wake cli/init --task "implement ken init command"
 ken wake cli/new --task "implement ken new command"
@@ -245,7 +246,7 @@ Each session produces a reflection. We read reflections to improve kennings manu
 
 ### Phase 3: Polish (Week 2)
 
-Still using ken, add quality-of-life:
+Still using `ken`, add quality-of-life:
 - `ken init` automated
 - `ken new` with starter templates
 - `ken tree` pretty printing
@@ -288,10 +289,10 @@ We've achieved bootstrap when:
 2. ✓ The agent walks through frames and arrives at understanding
 3. ✓ The agent completes the task (even if just describing what to do)
 4. ✓ A reflection is saved
-5. ✓ We've used ken to implement at least one feature of ken
+5. ✓ We've used `ken` to implement at least one feature of `ken`
 6. ✓ The reflection from that session is useful (we learned something)
 
-At that point, ken is self-hosting. Every future improvement uses ken.
+At that point, `ken` is self-hosting. Every future improvement uses `ken`.
 
 ---
 
@@ -300,7 +301,7 @@ At that point, ken is self-hosting. Every future improvement uses ken.
 1. **Write the first real kenning** — for the kenning parser itself
 2. **Manual test** — walk through it by hand in Claude Code
 3. **Implement minimal `ken wake`** — Python, API-based, chat-only
-4. **Use it** — build the next component using ken
+4. **Use it** — build the next component using `ken`
 5. **Iterate** — improve based on experience
 
 ---
@@ -312,9 +313,12 @@ Here's the first kenning we'd use to bootstrap:
 ```markdown
 # core/kenning-parser
 
+## Name
+Kenning Parser
+
 ## Frame 1: What You're Building
 
-You're building the kenning parser for a tool called ken.
+You're building the kenning parser for a tool called `ken`.
 
 A kenning is a markdown file containing ordered "frames" — prompts designed 
 to rebuild understanding in an AI agent. The parser reads this markdown 
@@ -402,10 +406,10 @@ Mitigation: Python first. Rewrite in Rust only if Python is actually too slow fo
 
 **What must work:** `ken wake {path} --task "..."` that walks frames and saves a reflection.
 
-**What can be manual:** Everything else. Project creation, ken creation, tree viewing, navigation, evolution.
+**What can be manual:** Everything else. Project creation, ken (unit) creation, tree viewing, navigation, kenning improvement.
 
-**What we'll learn by using:** Optimal frame count, frame types, reflection format, whether evolution is even needed.
+**What we'll learn by using:** Optimal frame count, frame types, reflection format, whether automated improvement tooling is even needed.
 
-**How we know we're done:** We used ken to build part of ken, and the reflection was useful.
+**How we know we're done:** We used `ken` to build part of `ken`, and the reflection was useful.
 
 Let's go.

@@ -1,6 +1,6 @@
 # Ken Bootstrap Project
 
-This is the minimal viable implementation to test and validate the ken concept.
+This is the minimal viable implementation to test and validate the concept behind `ken` — that kennings (reconstruction sequences) produce deeper understanding than cold-start documentation.
 
 ## Quick Start
 
@@ -53,8 +53,8 @@ bootstrap-project/
 
 1. Use `ken-bootstrap.py` to build `src/kenning.py` (the parser)
 2. Use `ken-bootstrap.py` to build `src/wake.py` (the wake command)
-3. Now you have a better ken, use it to build more of ken
-4. Repeat until ken is complete
+3. Now you have a better `ken`, use it to build more of `ken`
+4. Repeat until `ken` is self-hosting
 
 ## Writing Kennings
 
@@ -62,6 +62,9 @@ Kenning format:
 
 ```markdown
 # Kenning: path/to/ken
+
+## Name
+Short Human-Readable Label
 
 ## Meta
 parent: parent-path
@@ -97,14 +100,14 @@ Use this to improve your kennings.
 - No session recovery (don't interrupt)
 - No dynamic injection (no `{{file:...}}` templates)
 - No navigation (`ken context up/down`)
-- No evolution system
+- No kenning improvement tooling
 
 These come later, once we validate the core concept works.
 
 ## Success Criteria
 
 The bootstrap is successful when:
-- [x] We can run a ken session
+- [x] We can run a `ken` session
 - [ ] The agent produces useful work
 - [ ] The reflection contains actionable insights
-- [ ] We've used ken to build part of ken itself
+- [ ] We've used `ken` to build part of `ken` itself

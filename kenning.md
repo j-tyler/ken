@@ -1,5 +1,8 @@
 # Kenning: cli/wake
 
+## Name
+Wake Command Implementation
+
 ## Meta
 parent: cli
 version: 1
@@ -85,7 +88,7 @@ Your work session is complete. Before this context clears, reflect:
 2. What did you discover during work that future agents should know?
 3. If you could improve the kenning, what would you change?
 
-Be specific. Your reflection helps future instances.
+Be specific. Your reflection helps future agents woken into this ken.
 ```
 
 The response gets saved to `reflections/{ken-path}/{timestamp}.md`.

@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document covers the concrete technical implementation of ken. For the philosophical foundation and deep intent, see FOUNDATION.md — read that first.
+This document covers the concrete technical implementation of `ken`. For the philosophical foundation and deep intent, see FOUNDATION.md — read that first.
 
 ---
 
@@ -152,6 +152,7 @@ last_session: "2026-02-01T16:45:00Z"
 
 ```rust
 pub struct Kenning {
+    pub name: String,        // Unique human-readable label (e.g., "Wake Command Implementation")
     pub ken_path: String,
     pub version: u32,
     pub frames: Vec<Frame>,
@@ -268,37 +269,41 @@ Process:
 **Bind schema validation (required):**
 - Parse bind-contract metadata before frame execution (`bind_requirements.schema_format` + `bind_requirements.fields`).
 - Compile `ken_bind_schema_v1` using the canonical allowed type set (`string`, `number`, `integer`, `boolean`, `object`, `array`) and array-item constraints.
-- Validate caller payload against declared field specs (`required` + `type` + optional `items`).
-- On validation failure, reject wake with explicit missing/invalid field diagnostics.
+- Validate waker-provided payload against declared field specs (`required` + `type` + optional `items`).
+- On validation failure, reject wake with explicit missing/invalid field diagnostics returned to the waker.
 - Only after validation succeeds should runtime resolve bound data into grounding frames.
 
 Selection metadata note:
-- `frame_of_reference`, `task_types`, and `success_criteria` are for caller/agent kenning selection (`ken search`) and are not part of `ken wake` validation flow itself.
+- `frame_of_reference`, `task_types`, and `success_criteria` are for waker kenning selection (`ken search`) and are not part of `ken wake` validation flow itself.
 
 ### Runtime Boundary: Deterministic Software vs Reasoning Agent
 
 `ken` implementation should remain deterministic classical software.
 
-**ken runtime responsibilities (deterministic):**
+**`ken` runtime responsibilities (deterministic):**
 - Parse contract/kenning files
 - Validate bind payloads
 - Resolve templates/bindings
 - Sequence frames and persist artifacts
 - Emit machine-readable errors
 
-**Agent responsibilities (non-deterministic):**
+**Woken agent responsibilities (non-deterministic):**
 - Reason over frame content
 - Produce code/design outputs
 - Reflect on preparation quality
 
+**Waker responsibilities (non-deterministic):**
+- Select the kenning and provide bind data
+- Decide what work needs doing
+
 Do not embed agentic decision-making logic into `ken` runtime for bind selection, planning, or semantic guesswork.
 
-### Deterministic Validation Pipeline (Inference Cycle)
+### Deterministic Validation Pipeline
 
 The bind error payload must be produced by a deterministic pipeline with no LLM step.
 
 ```text
-Input: kenning contract + caller bind payload
+Input: kenning contract + waker-provided bind payload
 Output: either ValidatedBind or KEN_BIND_VALIDATION_FAILED
 
 Phase A: Contract compile
@@ -332,7 +337,7 @@ Determinism requirements:
 These are MUST/SHOULD rules for implementation consistency.
 
 **MUST**
-- Reject wake before spawning the agent if required bind payload is missing or invalid.
+- Reject wake before spawning the woken agent if required bind payload is missing or invalid.
 - Use a single validator engine and normalized violation model so equivalent input always yields equivalent error output.
 - Return machine-readable validation errors (field path, expected type/constraint, received value summary, and per-field usage/purpose from kenning metadata).
 - Include human-actionable remediation text (what to provide next).
@@ -343,7 +348,7 @@ These are MUST/SHOULD rules for implementation consistency.
 
 **SHOULD**
 - Support `--bind-file` and `--bind-json` input modes.
-- Support a `ken wake --dry-run` mode that validates binds and renders resolved frame inputs without spawning an agent.
+- Support a `ken wake --dry-run` mode that validates binds and renders resolved frame inputs without spawning a woken agent.
 - Redact sensitive bind values in logs while preserving field-level diagnostics.
 
 **MUST NOT**
@@ -400,9 +405,9 @@ Every bind field in a kenning contract must include:
 - `description` (what value to provide)
 - `purpose` (why this value matters)
 - `used_by_frames` (frame numbers where it is consumed)
-- `source_guidance` (how caller should gather it)
+- `source_guidance` (how the waker should gather it)
 
-Without this metadata, validation errors cannot teach orchestrators how to recover correctly. Runtime does not score semantic data quality; it validates declared field types/required flags and returns deterministic explanatory errors.
+Without this metadata, validation errors cannot teach the waker how to recover correctly. Runtime does not score semantic data quality; it validates declared field types/required flags and returns deterministic explanatory errors.
 
 Canonicalization:
 - Before validation, normalize bind payload keys/paths exactly as contract expects.
@@ -413,12 +418,12 @@ This is the core command. Detailed flow:
 ```
 1. Load project config (ken.yaml)
 2. Load ken metadata (kens/{path}/meta.yaml)
-3. Parse kenning (kens/{path}/kenning.md)
+3. Parse kenning (kens/{path}/kenning.md) — extract name, contract, and frames
 4. Load interface (kens/{path}/interface.md)
 5. Initialize session state
 
-6. Start AI agent:
-   - Spawn claude-code process in chat mode
+6. Spawn woken agent:
+   - Start claude-code process in chat mode
    - Establish communication channel (stdin/stdout)
 
 7. Walk through frames:
@@ -499,7 +504,7 @@ Can be called explicitly during session:
 
 ## Claude Code Integration
 
-### Spawning
+### Spawning the Woken Agent
 
 ```rust
 use std::process::{Command, Stdio};
@@ -616,7 +621,7 @@ Note: Actual Claude Code integration may require different IPC mechanism. This i
 - Error recovery (agent crash, malformed input)
 
 ### Dogfood Tests
-- Use ken to build ken (Phase 2)
+- Use `ken` to build `ken` itself (Phase 2)
 - Track what works and what doesn't
 - Generate real reflections
 
@@ -624,13 +629,12 @@ Note: Actual Claude Code integration may require different IPC mechanism. This i
 
 ## Future Considerations (Not Phase 1)
 
-### Evolution System
-- Reflection aggregation across sessions
-- Pattern detection in gaps/discoveries
-- Kenning mutation generation
-- A/B test orchestration
-- Statistical comparison of test results
-- Version promotion logic
+### Artifacts That Support Kenning Improvement
+- Reflection storage and aggregation across sessions
+- Kenning version history
+- Kenning guide persistence
+
+Note: Kenning improvement is done by an intelligence (human or AI) outside the wake cycle. `ken` stores the artifacts that make improvement possible but does not itself analyze, judge, or propose changes.
 
 ### Scaling
 - Parallel session orchestration
@@ -688,13 +692,15 @@ ken reflect
 `ken search` should rank candidate kennings using contract metadata, not filename heuristics.
 
 Minimum scoring inputs:
+- Kenning name match (quick human-readable identification)
 - Task intent similarity against `task_types`
-- Required bind satisfiability (can caller provide required fields?)
+- Required bind satisfiability (can the waker provide required fields?)
 - Declared success criteria fit (output expectations vs requested outcome)
 - Optional historical effectiveness signals (later phase)
 
 Recommended CLI output fields:
 - `ken_path`
+- `name` (the kenning's human-readable label)
 - `score`
 - `matched_task_type`
 - `required_binds`
@@ -705,29 +711,25 @@ Selection guardrail: top result should not be auto-executed without exposing req
 
 ---
 
-### Kenning Guide Enforcement in Improve/Promote Flow
+### Kenning Guide: Best Practices for Improvement
 
-Kenning guide is not part of wake execution path.
+The kenning guide is not part of the wake cycle. It exists for the intelligence improving the kenning.
 
-When a kenning revision is proposed or promoted (not during standard wake execution):
+When an intelligence revises a kenning, these practices should be followed:
 
 **MUST**
-- Require a paired update to `kenning_guide.md` explaining the change rationale.
+- Update `kenning_guide.md` alongside `kenning.md` explaining the change rationale.
 - Record ordering-sensitive edits explicitly (what moved, why, expected impact).
 - Record wording-sensitive edits explicitly (exact old/new phrasing and rationale).
-- Link evidence IDs (reflection files, trial runs) that motivated the change.
+- Link evidence (reflection files, trial results) that motivated the change.
 
 **SHOULD**
-- Block promotion if guide update is missing for non-trivial frame edits.
-- Produce a concise "revert risk" note to prevent future accidental rollbacks.
-
-Suggested CLI behavior:
-- `ken improve` emits a proposed `kenning_guide.md` patch alongside `kenning.md` patch.
-- `ken promote` validates both patches are present before accepting.
+- Include a "revert risk" note to prevent future accidental rollbacks.
+- For non-trivial frame edits, compare woken agent performance before and after.
 
 ---
 
-## Notes for Implementing Instance
+## Notes for the Implementing Agent
 
 You're about to build this. Some guidance:
 
@@ -737,7 +739,7 @@ You're about to build this. Some guidance:
 
 3. **The kenning parser is fiddly.** Markdown is ambiguous. Be defensive. Handle edge cases. Consider using a proper markdown parsing library.
 
-4. **Session state must be persistent.** If ken crashes mid-session, we need to recover. Consider using a state file.
+4. **Session state must be persistent.** If `ken` crashes mid-session, we need to recover. Consider using a state file.
 
 5. **Logging is your friend.** When debugging agent communication, you'll want to see every prompt sent and response received.
 
