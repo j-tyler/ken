@@ -8,7 +8,7 @@ Taking a hard look at what we've designed. What's essential? What's premature? W
 
 ## Command Naming Review
 
-Let me examine each command from the perspective of a fresh instance seeing it for the first time:
+Let me examine each command from the perspective of a fresh agent seeing it for the first time:
 
 ### Clear and Good
 
@@ -95,19 +95,19 @@ Everything else is optimization for *after* we prove the core idea works.
 
 ### What We're Explicitly Deferring
 
-**Evolution system** (evolve, trial, adopt, lineage)
-- Requires: reflection aggregation, mutation generation, A/B orchestration, scoring
+**Kenning improvement** (evolve, trial, adopt, lineage)
+- Done by an intelligence (human or AI) outside the wake cycle, using reflections `ken` accumulates
 - Can be done manually at first: read reflections yourself, edit kennings by hand
-- Build this after we have real reflections to learn from
+- `ken` can facilitate (store reflections, track versions) but the judgment is external
 
 **Navigation** (context up/down/peers)
 - Nice to have, not essential
-- Instance can just... read the meta.yaml if it needs orientation
+- The woken agent can just... read the meta.yaml if it needs orientation
 - Build this when we feel the pain of not having it
 
-**Multi-agent orchestration**
+**Multi-level waking (woken agents becoming wakers)**
 - Way premature
-- We don't even know if single-agent kennings work yet
+- We don't even know if single-level waking works yet
 
 **Interface validation**
 - Checking that kens honor their interface contracts
@@ -159,7 +159,7 @@ Then we can implement `MockAgent` for testing and `ClaudeCodeAgent` when we unde
 
 ### 4. Reflection Structure
 
-Reflections feed the evolution system. Their structure matters.
+Reflections feed the kenning improvement cycle. Their structure matters.
 
 **Decision needed:** Freeform or structured?
 
@@ -256,7 +256,7 @@ Plus:
 - Actual prompt/response flow
 - Template injection for grounding frames
 
-**Deliverable:** Can actually wake an AI instance into a ken.
+**Deliverable:** Can actually wake an agent into a ken.
 
 ### Week 5: Reflection & Polish
 
@@ -319,10 +319,10 @@ Alternative: `ken wake --task "..." ` is batch. Agent wakes, does task, reflects
 
 When an agent writes code, where does it go?
 - In the project's `work/` directory?
-- In a separate repo that ken knows about?
-- Ken doesn't care — agent writes wherever?
+- In a separate repo that `ken` knows about?
+- `ken` doesn't care — agent writes wherever?
 
-**Leaning:** Ken doesn't care. The ken project structure is for kennings and reflections. Actual code lives wherever it lives. The kenning's grounding frame can reference external paths.
+**Leaning:** `ken` doesn't care. The project structure is for kennings and reflections. Actual code lives wherever it lives. The kenning's grounding frame can reference external paths.
 
 ### 3. Multi-Ken Tasks
 
@@ -367,7 +367,7 @@ After v0.1, we should be able to:
 
 1. Create a ken project
 2. Define several kens with hand-written kennings
-3. Wake an AI instance into a ken
+3. Wake an agent into a ken
 4. Watch it walk through frames, generating understanding
 5. Give it a task, watch it work
 6. Read the reflection it produces
@@ -381,4 +381,4 @@ If #7 is false, we learn why and iterate on the kenning format.
 
 ## Next Action
 
-Update IMPLEMENTATION.md with these refinements before handing off to a building instance.
+Update IMPLEMENTATION.md with these refinements before handing off to the next agent.

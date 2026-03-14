@@ -4,7 +4,7 @@ Deterministic bind-validation fixtures for follow-up implementation.
 
 Each fixture contains:
 - `contract.json` — `ken_bind_schema_v1` contract model (each field includes `type`, `required`, `description`, `purpose`, `used_by_frames`, `source_guidance`)
-- `bind.json` — caller payload
+- `bind.json` — waker-provided bind payload
 - `expected.json` — expected deterministic output
 
 These fixtures are documentation-first and should become executable tests when runtime code is implemented.
