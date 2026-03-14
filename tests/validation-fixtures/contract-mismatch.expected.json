@@ -1,0 +1,9 @@
+{
+  "code": "KEN_CONTRACT_INVALID",
+  "ken_path": "review/pr",
+  "missing_field_spec_keys": {
+    "pr.diff": [
+      "source_guidance"
+    ]
+  }
+}

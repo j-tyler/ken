@@ -1,0 +1,15 @@
+{
+  "code": "KEN_CONTRACT_INVALID",
+  "ken_path": "review/pr",
+  "invalid_field_types": {
+    "pr.diff": "Elephant"
+  },
+  "allowed_types": [
+    "string",
+    "number",
+    "integer",
+    "boolean",
+    "object",
+    "array"
+  ]
+}

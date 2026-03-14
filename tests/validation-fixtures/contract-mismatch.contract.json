@@ -1,0 +1,17 @@
+{
+  "ken_path": "review/pr",
+  "bind_requirements": {
+    "schema_format": "ken_bind_schema_v1",
+    "fields": {
+      "pr.diff": {
+        "type": "string",
+        "required": true,
+        "description": "Unified diff",
+        "purpose": "Used in Frame 3",
+        "used_by_frames": [
+          3
+        ]
+      }
+    }
+  }
+}

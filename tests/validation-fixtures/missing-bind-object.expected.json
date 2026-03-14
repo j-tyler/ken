@@ -1,0 +1,19 @@
+{
+  "code": "KEN_BIND_VALIDATION_FAILED",
+  "ken_path": "review/pr",
+  "bind_object_present": false,
+  "violations": [
+    {
+      "path": "baseline.files",
+      "violation_type": "missing_required",
+      "expected": "array<string>",
+      "received_summary": "missing"
+    },
+    {
+      "path": "pr.diff",
+      "violation_type": "missing_required",
+      "expected": "string",
+      "received_summary": "missing"
+    }
+  ]
+}

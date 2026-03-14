@@ -1,0 +1,29 @@
+{
+  "ken_path": "review/pr",
+  "bind_requirements": {
+    "schema_format": "ken_bind_schema_v1",
+    "fields": {
+      "pr.diff": {
+        "type": "string",
+        "required": true,
+        "description": "Unified diff for the PR",
+        "purpose": "Used in Frame 3",
+        "used_by_frames": [
+          3
+        ],
+        "source_guidance": "Provide unified git diff"
+      },
+      "baseline.files": {
+        "type": "array",
+        "required": true,
+        "description": "Baseline files",
+        "purpose": "Used in Frame 2",
+        "used_by_frames": [
+          2
+        ],
+        "source_guidance": "List baseline files",
+        "items": "string"
+      }
+    }
+  }
+}
