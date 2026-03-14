@@ -7,7 +7,17 @@
       "path": "baseline.files",
       "violation_type": "type_mismatch",
       "expected": "array<string>",
-      "received_summary": "string"
+      "received_summary": "string",
+      "field_spec": {
+        "description": "Baseline files",
+        "purpose": "Used in Frame 2",
+        "used_by_frames": [2],
+        "source_guidance": "List baseline files"
+      }
     }
-  ]
+  ],
+  "remediation": {
+    "next_step": "Resubmit `ken wake` with corrected bind payload.",
+    "contract_ref": "kens/review/pr/kenning.md#contract-bind_requirements-fields"
+  }
 }

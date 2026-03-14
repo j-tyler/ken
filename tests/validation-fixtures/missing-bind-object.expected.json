@@ -7,13 +7,29 @@
       "path": "baseline.files",
       "violation_type": "missing_required",
       "expected": "array<string>",
-      "received_summary": "missing"
+      "received_summary": "missing",
+      "field_spec": {
+        "description": "Baseline files",
+        "purpose": "Used in Frame 2",
+        "used_by_frames": [2],
+        "source_guidance": "List baseline files"
+      }
     },
     {
       "path": "pr.diff",
       "violation_type": "missing_required",
       "expected": "string",
-      "received_summary": "missing"
+      "received_summary": "missing",
+      "field_spec": {
+        "description": "Unified diff for the PR",
+        "purpose": "Used in Frame 3",
+        "used_by_frames": [3],
+        "source_guidance": "Provide unified git diff"
+      }
     }
-  ]
+  ],
+  "remediation": {
+    "next_step": "Resubmit `ken wake` with bind payload satisfying required fields.",
+    "contract_ref": "kens/review/pr/kenning.md#contract-bind_requirements-fields"
+  }
 }
