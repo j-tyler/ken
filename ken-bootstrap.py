@@ -21,6 +21,7 @@ import re
 import shutil
 import subprocess
 import sys
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -127,6 +128,47 @@ def compose_prompt(kenning: Kenning, task: str) -> str:
     return "\n".join(parts)
 
 
+def compose_frame_prompts(kenning: Kenning) -> list[str]:
+    """Return individual prompts for each frame (one per turn)."""
+    prompts = []
+    for i, frame in enumerate(kenning.frames):
+        header = f"## Frame {frame.number}: {frame.title}\n\n{frame.prompt}"
+        if i == 0:
+            preamble = (
+                "You are being woken by ken. You will walk through a series of "
+                "frames that build your understanding of this area of the codebase, "
+                "then receive a task.\n\n"
+                "Think through this frame carefully. More frames will follow.\n\n"
+                "---\n\n"
+            )
+            prompts.append(preamble + header)
+        else:
+            prompts.append(header)
+    return prompts
+
+
+def compose_task_prompt(task: str) -> str:
+    """Compose the task delivery prompt."""
+    return (
+        "---\n\n## Task\n\n"
+        f"{task}\n\n"
+        "Complete this task by making the necessary changes to the codebase."
+    )
+
+
+def compose_reflection_prompt() -> str:
+    """Compose the reflection request prompt."""
+    return (
+        "---\n\n## Reflection\n\n"
+        "Your work session is complete. Create a file called `reflection.md` in the "
+        "repo root with your reflection on this session:\n\n"
+        "1. Did the frames prepare you well? What was clear, what was missing?\n"
+        "2. What did you discover during work that future agents should know?\n"
+        "3. If you could improve the kenning, what would you change?\n\n"
+        "Be specific. Your reflection helps future agents woken into this ken."
+    )
+
+
 # ============================================================================
 # Claude CLI Execution
 # ============================================================================
@@ -159,6 +201,33 @@ def run_claude(prompt: str, verbose: bool = True) -> subprocess.CompletedProcess
     return result
 
 
+def run_claude_turn(
+    prompt: str,
+    session_id: str,
+    worktree: Path,
+    is_first_turn: bool = False,
+) -> subprocess.CompletedProcess:
+    """Send a single turn to a claude session.
+
+    Uses --session-id on the first turn to create the session, then
+    --resume on subsequent turns to continue the same conversation.
+    The agent's responses accumulate in context across turns.
+    """
+    cmd = ["claude", "-p", "--output-format", "text"]
+    if is_first_turn:
+        cmd += ["--session-id", session_id]
+    else:
+        cmd += ["--resume", session_id]
+
+    return subprocess.run(
+        cmd,
+        input=prompt,
+        stderr=subprocess.PIPE,
+        text=True,
+        cwd=str(worktree),
+    )
+
+
 # ============================================================================
 # Reflection Persistence
 # ============================================================================
@@ -178,6 +247,20 @@ def _list_worktrees() -> set[Path]:
         if line.startswith("worktree "):
             paths.add(Path(line.split(" ", 1)[1]))
     return paths
+
+
+def create_worktree() -> Path:
+    """Create a git worktree for the session."""
+    name = f"ken-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    repo_root = Path(
+        subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+    )
+    worktree_path = repo_root.parent / name
+    subprocess.run(["git", "worktree", "add", str(worktree_path)], check=True)
+    return worktree_path
 
 
 def save_reflection(ken_path: str, task: str, new_worktrees: set[Path]):
@@ -218,6 +301,89 @@ def save_reflection(ken_path: str, task: str, new_worktrees: set[Path]):
 
 
 # ============================================================================
+# Multi-Turn Orchestration
+# ============================================================================
+
+def run_multi_turn(kenning: Kenning, task: str, verbose: bool = True) -> Path:
+    """Walk frames as separate conversation turns, then deliver task and reflection.
+
+    Each frame is sent as a separate claude -p invocation that resumes the same
+    session. The agent's responses accumulate in context across turns, so by the
+    time it receives the task, it has built understanding progressively — exactly
+    as the kenning design intends.
+    """
+    session_id = str(uuid.uuid4())
+
+    if not shutil.which("claude"):
+        print("Error: claude CLI not found on PATH")
+        print("Install: https://docs.anthropic.com/en/docs/claude-code")
+        sys.exit(1)
+
+    worktree = create_worktree()
+
+    if verbose:
+        print(f"[Session: {session_id}]")
+        print(f"[Worktree: {worktree}]\n")
+
+    frame_prompts = compose_frame_prompts(kenning)
+
+    # Walk frames
+    for i, prompt in enumerate(frame_prompts):
+        frame = kenning.frames[i]
+        if verbose:
+            print(f"\n{'='*60}")
+            print(f"Frame {frame.number}: {frame.title}")
+            print(f"{'='*60}\n")
+
+        result = run_claude_turn(
+            prompt=prompt,
+            session_id=session_id,
+            worktree=worktree,
+            is_first_turn=(i == 0),
+        )
+        if result.returncode != 0:
+            print(f"\nFrame {frame.number} failed (exit {result.returncode})", file=sys.stderr)
+            if result.stderr:
+                print(result.stderr, file=sys.stderr)
+            sys.exit(result.returncode)
+
+    # Task turn
+    if verbose:
+        print(f"\n{'='*60}")
+        print("Task")
+        print(f"{'='*60}\n")
+
+    result = run_claude_turn(
+        prompt=compose_task_prompt(task),
+        session_id=session_id,
+        worktree=worktree,
+    )
+    if result.returncode != 0:
+        print(f"\nTask turn failed (exit {result.returncode})", file=sys.stderr)
+        if result.stderr:
+            print(result.stderr, file=sys.stderr)
+        sys.exit(result.returncode)
+
+    # Reflection turn
+    if verbose:
+        print(f"\n{'='*60}")
+        print("Reflection")
+        print(f"{'='*60}\n")
+
+    result = run_claude_turn(
+        prompt=compose_reflection_prompt(),
+        session_id=session_id,
+        worktree=worktree,
+    )
+    if result.returncode != 0:
+        print(f"\nReflection turn failed (exit {result.returncode})", file=sys.stderr)
+        if result.stderr:
+            print(result.stderr, file=sys.stderr)
+
+    return worktree
+
+
+# ============================================================================
 # Main
 # ============================================================================
 
@@ -231,9 +397,9 @@ Example:
 
 The script will:
 1. Load the kenning from kens/<path>/kenning.md
-2. Compose frames + task into a structured prompt
-3. Spawn a claude agent in a git worktree
-4. The agent does real work (edits files, runs commands)
+2. Walk the agent through each frame as a separate conversation turn
+3. Deliver the task (the agent does real work in a git worktree)
+4. Prompt for and save a reflection
 5. You review changes in the worktree
         """
     )
@@ -242,6 +408,10 @@ The script will:
     parser.add_argument("--task", "-t", required=True, help="Task to accomplish")
     parser.add_argument("--kens-dir", default="kens", help="Directory containing kens")
     parser.add_argument("--quiet", "-q", action="store_true", help="Minimal output")
+    parser.add_argument(
+        "--single-turn", action="store_true",
+        help="Flatten all frames into a single prompt (legacy mode)",
+    )
 
     args = parser.parse_args()
 
@@ -266,27 +436,29 @@ The script will:
         print(f"Task: {args.task}")
         print(f"Kenning: {kenning_path}")
         print(f"Frames: {len(kenning.frames)}")
+        print(f"Mode: {'single-turn' if args.single_turn else 'multi-turn'}")
         print()
 
-    # Compose prompt from frames + task
-    prompt = compose_prompt(kenning, args.task)
+    if args.single_turn:
+        # Legacy path: flatten everything into one prompt
+        prompt = compose_prompt(kenning, args.task)
 
-    # Snapshot worktrees so we can identify the one claude creates
-    worktrees_before = _list_worktrees()
+        worktrees_before = _list_worktrees()
+        result = run_claude(prompt, verbose)
 
-    # Run claude in a worktree
-    result = run_claude(prompt, verbose)
+        if result.stderr:
+            print(result.stderr, file=sys.stderr)
 
-    if result.stderr:
-        print(result.stderr, file=sys.stderr)
+        if result.returncode != 0:
+            print(f"\nAgent exited with code {result.returncode}")
+            sys.exit(result.returncode)
 
-    if result.returncode != 0:
-        print(f"\nAgent exited with code {result.returncode}")
-        sys.exit(result.returncode)
-
-    # Collect reflection only from the worktree created by this session
-    new_worktrees = _list_worktrees() - worktrees_before
-    save_reflection(args.ken_path, args.task, new_worktrees)
+        new_worktrees = _list_worktrees() - worktrees_before
+        save_reflection(args.ken_path, args.task, new_worktrees)
+    else:
+        # Multi-turn: each frame is a separate conversation turn
+        worktree = run_multi_turn(kenning, args.task, verbose)
+        save_reflection(args.ken_path, args.task, {worktree})
 
     if verbose:
         print("\n" + "=" * 60)
