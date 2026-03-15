@@ -456,16 +456,15 @@ parent: {path or null}
 peers: [{path}, {path}, ...]
 version: {n}
 
-## Frames
-### Frame 1: {Title}
+## Frame 1: {Title}
 {Generative prompt — designed to make agent produce understanding}
 
-### Frame 2: {Title}
+## Frame 2: {Title}
 {Builds on Frame 1...}
 
 ...
 
-### Frame N: Grounding
+## Frame N: Grounding
 {Final frame: what exists, what's the current state, what's the task context}
 ```
 
@@ -610,11 +609,10 @@ Build enough to test the fundamental cycle:
 
 ```bash
 ken init
-ken create
+ken new
 ken tree
 ken wake --task
 ken reflect
-ken sleep
 ```
 
 Deferred: improvement cycle, testing framework, sophisticated orchestration

@@ -22,6 +22,7 @@ This README documents the **bootstrap MVP** workflow and simplified kenning form
 For the current canonical contract/runtime design (kenning contract, deterministic bind validation, wake semantics), use:
 - `FOUNDATION.md`
 - `IMPLEMENTATION.md`
+- `TERMINAL_SESSIONS.md` — how `ken wake` orchestrates CLI agent sessions via tmux
 - `QUICKREF.md`
 
 ## What Happens

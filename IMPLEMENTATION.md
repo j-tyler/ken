@@ -316,15 +316,16 @@ Phase A: Contract compile
 
 Phase B: Payload validate
 7. Run `ken_bind_schema_v1` field validator on bind payload.
-8. Collect violations as normalized tuples:
+8. For each key in the bind payload that does not appear in `bind_requirements.fields`, emit an `additional_property` violation.
+9. Collect violations as normalized tuples:
    - {path, violation_type, expected, received_summary}
 
 Phase C: Error materialize
-9. For each violation tuple at path P:
-   - Lookup metadata_map[P]
-   - Attach: description, purpose, used_by_frames, source_guidance
-10. Emit stable, sorted error arrays by field path.
-11. Return machine-readable error payload.
+10. For each violation tuple at path P:
+    - Lookup metadata_map[P]
+    - Attach: description, purpose, used_by_frames, source_guidance
+11. Emit stable, sorted error arrays by field path.
+12. Return machine-readable error payload.
 ```
 
 Determinism requirements:
@@ -385,7 +386,7 @@ These are MUST/SHOULD rules for implementation consistency.
         "description": "Unified diff for the PR being reviewed.",
         "purpose": "Used in Frame 3 to evaluate code changes against baseline behavior.",
         "used_by_frames": [3],
-        "source_guidance": "Provide full unified git diff for target PR.",
+        "source_guidance": "Provide full unified git diff for target PR."
       }
     }
   ],
@@ -489,20 +490,12 @@ Can be called explicitly during session:
 6. Update session status
 ```
 
-### `ken sleep`
-
-```
-1. Check session is active
-2. If reflection not yet written, prompt for it
-3. Gracefully terminate agent process
-4. Update session status to Complete
-5. Update ken metadata
-6. Clear session state
-```
-
 ---
 
 ## Claude Code Integration
+
+> **Note:** This section describes the original stdin/stdout approach for agent communication. See `TERMINAL_SESSIONS.md` for the tmux-based session management design that supersedes this approach.
+
 
 ### Spawning the Woken Agent
 
@@ -594,7 +587,6 @@ Note: Actual Claude Code integration may require different IPC mechanism. This i
 - [ ] Implement task injection
 - [ ] Implement `ken wake` end-to-end
 - [ ] Implement `ken reflect`
-- [ ] Implement `ken sleep`
 - [ ] Integration testing
 
 ### Week 5: Navigation & Polish
