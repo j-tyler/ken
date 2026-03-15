@@ -2,7 +2,7 @@
 
 ## Contract + Validation Follow-ups
 
-- [ ] Add deterministic validation fixtures under `tests/validation-fixtures/` for:
+- [x] Add deterministic validation fixtures under `tests/validation-fixtures/` for:
   - missing bind object
   - type mismatch
   - field-spec key mismatch (`KEN_CONTRACT_INVALID`)
