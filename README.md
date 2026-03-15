@@ -5,14 +5,11 @@ This is the minimal viable implementation to test and validate the concept behin
 ## Quick Start
 
 ```bash
-# Install dependency
-pip install anthropic
-
-# Set API key
-export ANTHROPIC_API_KEY=your-key-here
+# Requires: claude CLI installed and authenticated
+# See: https://docs.anthropic.com/en/docs/claude-code
 
 # Run your first ken session
-python ken-bootstrap.py core/kenning-parser --task "implement the frame parser in src/kenning.py"
+python ken-bootstrap.py beginning --task "review the codebase and suggest improvements"
 ```
 
 ## Specification Status
@@ -27,34 +24,34 @@ For the current canonical contract/runtime design (kenning contract, determinist
 
 ## What Happens
 
-1. The script loads `kens/core/kenning-parser/kenning.md`
-2. It walks Claude through each frame (you'll see the conversation)
-3. It delivers your task
-4. Claude works on the task
-5. It prompts Claude for a reflection
-6. The reflection is saved to `reflections/core/kenning-parser/TIMESTAMP.md`
+1. The script loads `kens/<path>/kenning.md`
+2. It composes all frames + task into a structured prompt
+3. It spawns a Claude Code agent in an isolated git worktree
+4. The agent does real work (edits files, runs commands)
+5. The agent writes a reflection to `reflection.md` in the worktree
+6. The reflection is saved to `reflections/<path>/TIMESTAMP.md`
 
 ## Project Structure
 
 ```
-bootstrap-project/
-├── ken-bootstrap.py      # The bootstrap script
+ken/
+├── ken-bootstrap.py      # The bootstrap script (parser + prompt + agent spawn)
 ├── kens/                  # Kenning definitions
-│   ├── core/
-│   │   └── kenning-parser/
+│   ├── beginning/
+│   │   └── kenning.md
+│   ├── cli/
+│   │   └── wake/
 │   │       └── kenning.md
-│   └── cli/
-│       └── wake/
-│           └── kenning.md
-├── reflections/           # Saved reflections (created as you use it)
-└── src/                   # Your code output (you create this)
+│   └── test/
+│       └── kenning.md
+└── reflections/           # Saved reflections (created as agents run)
 ```
 
 ## The Bootstrap Loop
 
-1. Use `ken-bootstrap.py` to build `src/kenning.py` (the parser)
-2. Use `ken-bootstrap.py` to build `src/wake.py` (the wake command)
-3. Now you have a better `ken`, use it to build more of `ken`
+1. Use `ken-bootstrap.py` to wake agents with structured context
+2. Agents do real work in isolated worktrees
+3. Read reflections, improve kennings based on what agents report
 4. Repeat until `ken` is self-hosting
 
 ## Writing Kennings
@@ -97,7 +94,7 @@ Use this to improve your kennings.
 
 ## Limitations of Bootstrap
 
-- Agent can't actually write files (just describes code)
+- Frame walking is single-prompt (not multi-turn conversation)
 - No session recovery (don't interrupt)
 - No dynamic injection (no `{{file:...}}` templates)
 - No navigation (`ken context up/down`)
